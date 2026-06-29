@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Matières — Emploi du Temps Scolaire{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h2>Matières</h2>
+  <p>Ajoutez les matières enseignées dans votre école.</p>
+</div>
+
+<div class="card">
+  <h3 class="card-title">Ajouter une matière</h3>
+  <form method="post" class="inline-form" id="subjectForm">
+    <input type="hidden" name="action" value="add" id="subjectAction">
+    <input type="hidden" name="original_name" id="subjectOriginalName">
+    <div class="form-group">
+      <label class="form-label" for="subject-name">Nom de la matière</label>
+      <input type="text" id="subject-name" name="name" class="form-input"
+             placeholder="ex: Arabe, Français, Anglais…" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="subject-max-per-day">Créneaux max par jour</label>
+      <input type="number" id="subject-max-per-day" name="max_per_day" class="form-input"
+             min="1" max="7" value="7" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="subject-min-per-day">Minimum par jour (0 = désactivé)</label>
+      <input type="number" id="subject-min-per-day" name="min_per_day" class="form-input"
+             min="0" max="7" value="0" required>
+      <p class="form-hint">
+        Si la matière est enseignée un jour donné, elle doit avoir au moins ce nombre de créneaux
+        <strong>consécutifs</strong>, ou aucun ce jour-là.
+        Exemple : 2 pour le français évite les séances isolées.
+      </p>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary" id="subjectSubmit">Ajouter la Matière</button>
+      <button type="button" class="btn btn-secondary" id="subjectCancelEdit" style="display:none;">Annuler</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3 class="card-title">Toutes les matières ({{ subjects|length }})</h3>
+  {% if subjects %}
+  <div class="item-list">
+    {% for subject in subjects %}
+    <div class="list-item">
+      <div class="list-item-info">
+        <h4>{{ subject.name }}</h4>
+        <p>Créneaux max par jour : {{ subject.max_per_day }}</p>
+        <p>
+          Minimum par jour :
+          {% if subject.min_per_day %}
+            {{ subject.min_per_day }} consécutif(s) ou aucun
+          {% else %}
+            désactivé
+          {% endif %}
+        </p>
+      </div>
+      <div class="list-item-actions">
+        <button type="button" class="btn btn-secondary btn-sm edit-subject-btn"
+                data-subject='{{ subject | tojson }}'>Modifier</button>
+        <form method="post" class="list-item-actions"
+              onsubmit="return confirm('Supprimer {{ subject.name }} ?')">
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="name" value="{{ subject.name }}">
+          <button type="submit" class="btn btn-danger btn-sm">Supprimer</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">📖</div>
+    <h3>Pas encore de matières</h3>
+    <p>Ajoutez votre première matière ci-dessus pour commencer.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+window.addEventListener('DOMContentLoaded', () => {
+  const actionInput = document.getElementById('subjectAction');
+  const originalNameInput = document.getElementById('subjectOriginalName');
+  const nameInput = document.getElementById('subject-name');
+  const maxPerDayInput = document.getElementById('subject-max-per-day');
+  const minPerDayInput = document.getElementById('subject-min-per-day');
+  const submitButton = document.getElementById('subjectSubmit');
+  const cancelButton = document.getElementById('subjectCancelEdit');
+
+  function clampMinPerDay() {
+    const maxVal = parseInt(maxPerDayInput.value, 10) || 7;
+    const minVal = parseInt(minPerDayInput.value, 10) || 0;
+    minPerDayInput.max = maxVal;
+    if (minVal > maxVal) {
+      minPerDayInput.value = maxVal;
+    }
+  }
+
+  maxPerDayInput.addEventListener('input', clampMinPerDay);
+
+  function resetSubjectForm() {
+    actionInput.value = 'add';
+    originalNameInput.value = '';
+    nameInput.value = '';
+    maxPerDayInput.value = 7;
+    minPerDayInput.value = 0;
+    minPerDayInput.max = 7;
+    submitButton.textContent = 'Ajouter la Matière';
+    cancelButton.style.display = 'none';
+  }
+
+  function startEditSubject(subject) {
+    actionInput.value = 'edit';
+    originalNameInput.value = subject.name || '';
+    nameInput.value = subject.name || '';
+    maxPerDayInput.value = subject.max_per_day || 7;
+    minPerDayInput.value = subject.min_per_day || 0;
+    clampMinPerDay();
+    submitButton.textContent = 'Enregistrer la Matière';
+    cancelButton.style.display = '';
+    nameInput.focus();
+  }
+
+  document.querySelectorAll('.edit-subject-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const subject = JSON.parse(btn.dataset.subject);
+      startEditSubject(subject);
+    });
+  });
+
+  cancelButton.addEventListener('click', resetSubjectForm);
+});
+</script>
+{% endblock %}

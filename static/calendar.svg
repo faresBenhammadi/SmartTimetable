@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <defs>
+    <!-- Premium gradient matching modern UI systems -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#2563eb" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+  <!-- Background plate -->
+  <rect x="4" y="8" width="40" height="36" rx="8" fill="url(#bg-grad)" filter="url(#shadow)" />
+  <!-- Header bar -->
+  <path d="M4 16 V8 A8 8 0 0 1 12 0 H36 A8 8 0 0 1 44 8 V16 Z" fill="#1e40af" opacity="0.3" />
+  <!-- Binder rings -->
+  <rect x="12" y="4" width="4" height="8" rx="2" fill="#ffffff" />
+  <rect x="32" y="4" width="4" height="8" rx="2" fill="#ffffff" />
+  <!-- Calendar grid details -->
+  <circle cx="14" cy="22" r="2.5" fill="#ffffff" opacity="0.9" />
+  <circle cx="24" cy="22" r="2.5" fill="#ffffff" opacity="0.9" />
+  <circle cx="34" cy="22" r="2.5" fill="#ffffff" opacity="0.9" />
+  <circle cx="14" cy="30" r="2.5" fill="#ffffff" opacity="0.9" />
+  <circle cx="24" cy="30" r="2.5" fill="#ffffff" opacity="0.9" />
+  <circle cx="34" cy="30" r="2.5" fill="#ffffff" opacity="0.9" />
+  <circle cx="14" cy="38" r="2.5" fill="#ffffff" opacity="0.5" />
+  <circle cx="24" cy="38" r="2.5" fill="#ffffff" opacity="0.9" />
+  <circle cx="34" cy="38" r="2.5" fill="#ffffff" opacity="0.9" />
+</svg>

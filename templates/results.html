@@ -1,0 +1,539 @@
+{% extends "base.html" %}
+{% block title %}Résultats de l'Emploi du Temps — Emploi du Temps Scolaire{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem;">
+  <div>
+    <h2 style="display: flex; align-items: center; gap: 0.75rem; margin: 0; font-size: 1.75rem; font-weight: 700; color: var(--text);">
+      {{ schedule_name }}
+      {% if schedule_id %}
+      <span style="font-size: 0.8rem; font-weight: 500; color: var(--primary); padding: 0.2rem 0.5rem; background: rgba(59, 130, 246, 0.1); border-radius: var(--radius-sm); border: 1px solid rgba(59, 130, 246, 0.2);">Sauvegardé</span>
+      {% endif %}
+    </h2>
+    <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 0.25rem;">Votre emploi du temps généré pour toutes les classes et tous les enseignants.</p>
+  </div>
+  <div>
+    <a href="{{ url_for('history') }}" class="btn btn-secondary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;">
+      📂 Retour à l'historique
+    </a>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="class-view">Vue par Classe</button>
+  <button class="tab-btn" data-tab="teacher-view">Vue par Enseignant</button>
+</div>
+
+<div id="class-view" class="tab-panel active">
+  <div class="swap-controls" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+    <button class="btn btn-primary" id="swapButton" disabled>Échanger ou déplacer les cellules sélectionnées</button>
+    <button class="btn btn-secondary" id="addLessonBtn" disabled>Ajouter un cours</button>
+    <button class="btn btn-danger" id="removeLessonBtn" disabled>Retirer le cours</button>
+    <span id="swapMessage" class="swap-message"></span>
+  </div>
+  {% for class_name, slots in schedule.class_view.items() %}
+  <div class="teacher-section">
+    <div class="section-header-print">
+      <h3>{{ class_name }}</h3>
+      <button class="btn btn-secondary btn-sm btn-print" onclick="printSingleTable(this)">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: middle;"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+        Imprimer
+      </button>
+    </div>
+    <div class="mobile-scroll-hint" style="display: none; font-size: 0.78rem; color: var(--text-muted); margin: 0 0 0.5rem 0.25rem; align-items: center; gap: 0.25rem;">
+      <span>↔️ Faites glisser horizontalement pour voir tous les jours</span>
+    </div>
+    <div class="schedule-table-wrapper">
+      <table class="schedule-table timetable-grid-table">
+        <thead>
+          <tr>
+            <th>Période</th>
+            {% for day in config.days %}
+            <th>{{ translate_day(day) }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in range(1, max_periods + 1) %}
+          <tr>
+            <td class="time-col">P{{ p }} : ......</td>
+            {% for day in config.days %}
+            {% set time_key = day ~ ' P' ~ p %}
+            {% if p <= periods_by_day.get(day, 0) %}
+            {% set subject = slots.get(time_key) %}
+            {% if subject %}
+            <td class="session-cell selectable assigned-cell" data-class="{{ class_name }}" data-time="{{ time_key }}" style="background: {{ subject_colors.get(subject, '#eff6ff') }}; color: #111827;">{{ subject }}</td>
+            {% else %}
+            <td class="session-cell empty-cell selectable" data-class="{{ class_name }}" data-time="{{ time_key }}" data-empty="true"></td>
+            {% endif %}
+            {% else %}
+            <td class="session-cell empty-cell"></td>
+            {% endif %}
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div id="teacher-view" class="tab-panel">
+  <div class="swap-controls">
+    <button class="btn btn-primary" id="teacherSwapButton" disabled>Échanger les cours de l'enseignant sélectionnés</button>
+    <span id="teacherSwapMessage" class="swap-message"></span>
+  </div>
+  {% for teacher_name, entries in schedule.teacher_view.items() %}
+  <div class="teacher-section">
+    <div class="section-header-print">
+      <h3>{{ teacher_name }}</h3>
+      <button class="btn btn-secondary btn-sm btn-print" onclick="printSingleTable(this)">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: middle;"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+        Imprimer
+      </button>
+    </div>
+    <div class="mobile-scroll-hint" style="display: none; font-size: 0.78rem; color: var(--text-muted); margin: 0 0 0.5rem 0.25rem; align-items: center; gap: 0.25rem;">
+      <span>↔️ Faites glisser horizontalement pour voir tous les jours</span>
+    </div>
+    <div class="schedule-table-wrapper">
+      <table class="schedule-table timetable-grid-table">
+        <thead>
+          <tr>
+            <th>Période</th>
+            {% for day in config.days %}
+            <th>{{ translate_day(day) }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in range(1, max_periods + 1) %}
+          <tr>
+            <td class="time-col">P{{ p }} : ......</td>
+            {% for day in config.days %}
+            {% set time_key = day ~ ' P' ~ p %}
+            {% if p <= periods_by_day.get(day, 0) %}
+            {% set entry = teacher_slot_map.get(teacher_name, {}).get(time_key) %}
+            {% if entry %}
+            <td class="session-cell selectable" data-teacher="{{ teacher_name }}" data-time="{{ time_key }}" style="background: {{ subject_colors.get(entry.subject, '#eff6ff') }}; color: #111827;">
+              <strong>{{ entry.class }}</strong>
+              <div class="session-subject">{{ entry.subject }}</div>
+            </td>
+            {% else %}
+            <td class="session-cell empty-cell"></td>
+            {% endif %}
+            {% else %}
+            <td class="session-cell empty-cell"></td>
+            {% endif %}
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Add Lesson Modal -->
+<div class="modal-overlay" id="addLessonModal">
+  <div class="modal" style="max-width: 450px;">
+    <div class="modal-header">
+      <h3>Ajouter un cours</h3>
+      <button class="modal-close" id="closeAddLessonModal">&times;</button>
+    </div>
+    
+    <div class="form-group">
+      <label class="form-label">Classe</label>
+      <input type="text" id="addLessonClass" class="form-input" readonly style="background-color: var(--bg); cursor: not-allowed;">
+    </div>
+    
+    <div class="form-group">
+      <label class="form-label">Créneau</label>
+      <input type="text" id="addLessonTimeLabel" class="form-input" readonly style="background-color: var(--bg); cursor: not-allowed;">
+      <input type="hidden" id="addLessonTime">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="addLessonSubject">Matière</label>
+      <select id="addLessonSubject" class="form-input">
+        <option value="">-- Sélectionner une matière --</option>
+        {% for subject in subjects %}
+        <option value="{{ subject }}">{{ subject }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="addLessonTeacher">Enseignant</label>
+      <select id="addLessonTeacher" class="form-input" disabled>
+        <option value="">-- Sélectionner un enseignant --</option>
+      </select>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="cancelAddLessonModal">Annuler</button>
+      <button class="btn btn-primary" id="saveAddLesson" disabled>Ajouter</button>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 2rem; display: flex; gap: 1rem;">
+  <a href="{{ url_for('generate') }}" class="btn btn-primary btn-lg">Générer à Nouveau</a>
+  <a href="{{ url_for('dashboard') }}" class="btn btn-secondary btn-lg">Retour à l'Accueil</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const scheduleId = "{{ schedule_id or '' }}";
+const DAY_TRANSLATIONS = {
+  'Sunday': 'Dimanche',
+  'Monday': 'Lundi',
+  'Tuesday': 'Mardi',
+  'Wednesday': 'Mercredi',
+  'Thursday': 'Jeudi',
+  'Friday': 'Vendredi',
+  'Saturday': 'Samedi'
+};
+
+function translateTimeKey(timeKey) {
+  if (!timeKey) return '';
+  // e.g. "Sunday P1" or "Sunday-1"
+  if (timeKey.includes(' P')) {
+    const parts = timeKey.split(' P');
+    return `${DAY_TRANSLATIONS[parts[0]] || parts[0]} P${parts[1]}`;
+  }
+  const parts = timeKey.split('-');
+  if (parts.length === 2) {
+    return `${DAY_TRANSLATIONS[parts[0]] || parts[0]} P${parts[1]}`;
+  }
+  return timeKey;
+}
+
+function printSingleTable(buttonEl) {
+  const section = buttonEl.closest('.teacher-section');
+  section.classList.add('print-target');
+  document.body.classList.add('printing-single-table');
+  window.print();
+  setTimeout(() => {
+    document.body.classList.remove('printing-single-table');
+    section.classList.remove('print-target');
+  }, 100);
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+
+const swapButton = document.getElementById('swapButton');
+const swapMessage = document.getElementById('swapMessage');
+const addLessonBtn = document.getElementById('addLessonBtn');
+const removeLessonBtn = document.getElementById('removeLessonBtn');
+let selectedCells = [];
+
+function updateSwapState() {
+  const canUse = selectedCells.length === 2;
+  const bothSameClass = canUse && selectedCells[0].dataset.class === selectedCells[1].dataset.class;
+  const oneEmpty = canUse && (selectedCells[0].dataset.empty === 'true' || selectedCells[1].dataset.empty === 'true');
+  const bothEmpty = canUse && selectedCells[0].dataset.empty === 'true' && selectedCells[1].dataset.empty === 'true';
+
+  swapButton.disabled = !canUse || !bothSameClass || bothEmpty;
+
+  const canAdd = selectedCells.length === 1 && selectedCells[0].dataset.empty === 'true';
+  addLessonBtn.disabled = !canAdd;
+
+  const canRemove = selectedCells.length === 1 && selectedCells[0].dataset.empty !== 'true';
+  removeLessonBtn.disabled = !canRemove;
+
+  if (selectedCells.length === 1) {
+    if (canAdd) {
+      swapMessage.textContent = `Sélectionné : créneau vide pour la classe ${selectedCells[0].dataset.class} à ${translateTimeKey(selectedCells[0].dataset.time)}. Cliquez sur "Ajouter un cours" pour planifier.`;
+    } else {
+      swapMessage.textContent = `Sélectionné : cours pour la classe ${selectedCells[0].dataset.class} à ${translateTimeKey(selectedCells[0].dataset.time)}. Cliquez sur "Retirer le cours" pour le supprimer.`;
+    }
+    return;
+  }
+
+  if (!canUse) {
+    swapMessage.textContent = 'Sélectionnez deux cellules de la même classe pour échanger ou déplacer un cours, ou une seule cellule pour ajouter/retirer.';
+    return;
+  }
+
+  if (!bothSameClass) {
+    swapMessage.textContent = 'Veuillez sélectionner deux cellules de la même classe.';
+    return;
+  }
+
+  if (bothEmpty) {
+    swapMessage.textContent = 'Sélectionnez au moins un cours planifié à déplacer.';
+    return;
+  }
+
+  const assignedCell = selectedCells.find(c => c.dataset.empty !== 'true');
+  const emptyCell = selectedCells.find(c => c.dataset.empty === 'true');
+
+  if (oneEmpty) {
+    swapMessage.textContent = `Prêt à déplacer de ${translateTimeKey(assignedCell.dataset.time)} vers ${translateTimeKey(emptyCell.dataset.time)} pour la classe ${assignedCell.dataset.class}.`;
+  } else {
+    swapMessage.textContent = `Prêt à échanger ${translateTimeKey(selectedCells[0].dataset.time)} et ${translateTimeKey(selectedCells[1].dataset.time)} pour la classe ${selectedCells[0].dataset.class}.`;
+  }
+}
+
+document.querySelectorAll('#class-view td.session-cell.selectable').forEach(cell => {
+  cell.addEventListener('click', () => {
+    if (cell.classList.contains('selected')) {
+      cell.classList.remove('selected');
+      selectedCells = selectedCells.filter(c => c !== cell);
+    } else {
+      if (selectedCells.length === 2) {
+        selectedCells[0].classList.remove('selected');
+        selectedCells[1].classList.remove('selected');
+        selectedCells = [];
+      } else if (selectedCells.length === 1 && cell.classList.contains('selectable')) {
+        // If we select a second cell, allow it, but if it was 1, we toggle
+      }
+      selectedCells.push(cell);
+      cell.classList.add('selected');
+    }
+    updateSwapState();
+  });
+});
+
+swapButton.addEventListener('click', async () => {
+  if (selectedCells.length !== 2) {
+    return;
+  }
+  const [cellA, cellB] = selectedCells;
+  if (cellA.dataset.class !== cellB.dataset.class) {
+    swapMessage.textContent = 'Veuillez sélectionner deux cours de la même classe.';
+    return;
+  }
+
+  const response = await fetch('{{ url_for("results_swap") }}', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      class: cellA.dataset.class,
+      time_a: cellA.dataset.time,
+      time_b: cellB.dataset.time,
+      schedule_id: scheduleId,
+    }),
+  });
+
+  const data = await response.json();
+  if (!data.ok) {
+    swapMessage.textContent = data.error || 'Impossible d\'échanger les leçons sélectionnées.';
+    return;
+  }
+
+  window.location.reload();
+});
+
+// Modal Logic for Adding Lesson
+const addLessonModal = document.getElementById('addLessonModal');
+const closeAddLessonModal = document.getElementById('closeAddLessonModal');
+const cancelAddLessonModal = document.getElementById('cancelAddLessonModal');
+const saveAddLesson = document.getElementById('saveAddLesson');
+const addLessonSubject = document.getElementById('addLessonSubject');
+const addLessonTeacher = document.getElementById('addLessonTeacher');
+const addLessonClass = document.getElementById('addLessonClass');
+const addLessonTime = document.getElementById('addLessonTime');
+const addLessonTimeLabel = document.getElementById('addLessonTimeLabel');
+
+const ALL_TEACHERS = {{ teachers | tojson if teachers else '[]' }};
+
+addLessonBtn.addEventListener('click', () => {
+  if (selectedCells.length !== 1 || selectedCells[0].dataset.empty !== 'true') return;
+
+  const cell = selectedCells[0];
+  addLessonClass.value = cell.dataset.class;
+  addLessonTime.value = cell.dataset.time;
+  addLessonTimeLabel.value = translateTimeKey(cell.dataset.time);
+
+  addLessonSubject.value = '';
+  addLessonTeacher.innerHTML = '<option value="">-- Sélectionner un enseignant --</option>';
+  addLessonTeacher.disabled = true;
+  saveAddLesson.disabled = true;
+
+  addLessonModal.classList.add('open');
+});
+
+function closeAddLesson() {
+  addLessonModal.classList.remove('open');
+}
+
+closeAddLessonModal.addEventListener('click', closeAddLesson);
+cancelAddLessonModal.addEventListener('click', closeAddLesson);
+addLessonModal.addEventListener('click', e => { if (e.target === addLessonModal) closeAddLesson(); });
+
+addLessonSubject.addEventListener('change', () => {
+  const subj = addLessonSubject.value;
+  const cls = addLessonClass.value;
+
+  addLessonTeacher.innerHTML = '<option value="">-- Sélectionner un enseignant --</option>';
+
+  if (!subj) {
+    addLessonTeacher.disabled = true;
+    saveAddLesson.disabled = true;
+    return;
+  }
+
+  const allowed = ALL_TEACHERS.filter(t =>
+    t.subjects.includes(subj) && t.allowed_classes.includes(cls)
+  );
+
+  allowed.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t.name;
+    opt.textContent = t.name;
+    addLessonTeacher.appendChild(opt);
+  });
+
+  addLessonTeacher.disabled = false;
+  saveAddLesson.disabled = !addLessonSubject.value || !addLessonTeacher.value;
+});
+
+addLessonTeacher.addEventListener('change', () => {
+  saveAddLesson.disabled = !addLessonSubject.value || !addLessonTeacher.value;
+});
+
+saveAddLesson.addEventListener('click', async () => {
+  const cls = addLessonClass.value;
+  const time = addLessonTime.value;
+  const subj = addLessonSubject.value;
+  const teacher = addLessonTeacher.value;
+
+  const response = await fetch('{{ url_for("results_add_lesson") }}', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      class: cls,
+      time: time,
+      subject: subj,
+      teacher: teacher,
+      schedule_id: scheduleId,
+    }),
+  });
+
+  const data = await response.json();
+  if (!data.ok) {
+    alert(data.error || "Impossible d'ajouter le cours.");
+    return;
+  }
+
+  window.location.reload();
+});
+
+// Remove Lesson Logic
+removeLessonBtn.addEventListener('click', async () => {
+  if (selectedCells.length !== 1 || selectedCells[0].dataset.empty === 'true') return;
+
+  const cell = selectedCells[0];
+  const cls = cell.dataset.class;
+  const time = cell.dataset.time;
+
+  if (!confirm(`Voulez-vous retirer le cours de cette cellule (${translateTimeKey(time)}) ?`)) {
+    return;
+  }
+
+  const response = await fetch('{{ url_for("results_remove_lesson") }}', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      class: cls,
+      time: time,
+      schedule_id: scheduleId,
+    }),
+  });
+
+  const data = await response.json();
+  if (!data.ok) {
+    alert(data.error || "Impossible de retirer le cours.");
+    return;
+  }
+
+  window.location.reload();
+});
+
+
+const teacherSwapButton = document.getElementById('teacherSwapButton');
+const teacherSwapMessage = document.getElementById('teacherSwapMessage');
+let selectedTeacherCells = [];
+
+function updateTeacherSwapState() {
+  const canUse = selectedTeacherCells.length === 2;
+  const bothSameTeacher = canUse && selectedTeacherCells[0].dataset.teacher === selectedTeacherCells[1].dataset.teacher;
+
+  teacherSwapButton.disabled = !canUse || !bothSameTeacher;
+  teacherSwapMessage.textContent = !canUse
+    ? 'Sélectionnez deux cours pour le même enseignant pour les échanger.'
+    : bothSameTeacher
+      ? `Prêt à échanger ${translateTimeKey(selectedTeacherCells[0].dataset.time)} et ${translateTimeKey(selectedTeacherCells[1].dataset.time)} pour ${selectedTeacherCells[0].dataset.teacher}.`
+      : 'Veuillez sélectionner deux cours pour le même enseignant.';
+}
+
+document.querySelectorAll('#teacher-view td.session-cell.selectable').forEach(cell => {
+  cell.addEventListener('click', () => {
+    if (cell.classList.contains('selected')) {
+      cell.classList.remove('selected');
+      selectedTeacherCells = selectedTeacherCells.filter(c => c !== cell);
+    } else {
+      if (selectedTeacherCells.length === 2) {
+        selectedTeacherCells[0].classList.remove('selected');
+        selectedTeacherCells[1].classList.remove('selected');
+        selectedTeacherCells = [];
+      }
+      selectedTeacherCells.push(cell);
+      cell.classList.add('selected');
+    }
+    updateTeacherSwapState();
+  });
+});
+
+teacherSwapButton.addEventListener('click', async () => {
+  if (selectedTeacherCells.length !== 2) {
+    return;
+  }
+  const [cellA, cellB] = selectedTeacherCells;
+  if (cellA.dataset.teacher !== cellB.dataset.teacher) {
+    teacherSwapMessage.textContent = 'Veuillez sélectionner deux cours pour le même enseignant.';
+    return;
+  }
+
+  const response = await fetch('{{ url_for("results_swap_teacher") }}', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      teacher: cellA.dataset.teacher,
+      time_a: cellA.dataset.time,
+      time_b: cellB.dataset.time,
+      schedule_id: scheduleId,
+    }),
+  });
+
+  const data = await response.json();
+  if (!data.ok) {
+    teacherSwapMessage.textContent = data.error || 'Impossible d\'échanger les leçons de l\'enseignant sélectionnées.';
+    return;
+  }
+
+  window.location.reload();
+});
+
+updateTeacherSwapState();
+</script>
+{% endblock %}

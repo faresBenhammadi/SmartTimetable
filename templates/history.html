@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block title %}Historique des Emplois du Temps — Emploi du Temps{% endblock %}
+
+{% block content %}
+<div class="container" style="max-width: 1000px; padding: 2rem 1rem;">
+  <div class="header-section" style="margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+    <div>
+      <h2 style="font-size: 1.75rem; font-weight: 700; color: var(--text); margin: 0;">Historique des Emplois du Temps</h2>
+      <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 0.25rem;">Consultez, modifiez ou supprimez vos emplois du temps précédemment générés.</p>
+    </div>
+    <a href="{{ url_for('generate') }}" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem; text-decoration: none;">
+      <span>📅</span> Générer un nouveau
+    </a>
+  </div>
+
+  {% if schedules %}
+  <div style="display: grid; grid-template-columns: 1fr; gap: 1.25rem;">
+    {% for sched in schedules %}
+    <div class="card" style="border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-card); padding: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1.5rem; transition: transform 0.2s, box-shadow 0.2s;" onmouseover="this.style.boxShadow='var(--shadow-md)'; this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='none'; this.style.transform='none'">
+      <div style="flex: 1; min-width: 250px;">
+        <!-- Schedule Name Inline Edit -->
+        <form method="post" action="{{ url_for('rename_schedule', schedule_id=sched.id) }}" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+          <input type="text" name="name" value="{{ sched.name }}" class="form-input" style="font-weight: 600; font-size: 1.1rem; border: 1px solid transparent; background: transparent; padding: 0.25rem 0.5rem; border-radius: var(--radius-sm); width: 100%; max-width: 350px; cursor: text;" onfocus="this.style.borderColor='var(--border)'; this.style.background='var(--bg-input)'" onblur="setTimeout(() => { if(this.value.trim() !== '{{ sched.name }}' && this.value.trim() !== '') { this.form.submit(); } else { this.style.borderColor='transparent'; this.style.background='transparent'; this.value='{{ sched.name }}'; } }, 200)">
+          <button type="submit" style="display: none;"></button>
+        </form>
+        
+        <div style="display: flex; align-items: center; gap: 1rem; font-size: 0.85rem; color: var(--text-muted); padding-left: 0.5rem;">
+          <span>🕒 Créé le: {{ sched.created_at }}</span>
+          <span>•</span>
+          <span>📊 {{ sched.schedule_data.entries | length if sched.schedule_data else 0 }} leçons planifiées</span>
+        </div>
+      </div>
+      
+      <div style="display: flex; gap: 0.75rem; align-items: center;">
+        <a href="{{ url_for('results', id=sched.id) }}" class="btn btn-primary" style="text-decoration: none; padding: 0.6rem 1.2rem; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.5rem;">
+          👁️ Visualiser / Modifier
+        </a>
+        <form method="post" action="{{ url_for('delete_schedule', schedule_id=sched.id) }}" style="display: inline;" onsubmit="return confirm('Êtes-vous sûr de vouloir supprimer cet emploi du temps de votre historique ?');">
+          <button type="submit" class="btn" style="background: #fee2e2; color: #ef4444; border: 1px solid #fca5a5; padding: 0.6rem 1.2rem; font-size: 0.9rem; border-radius: var(--radius-md); font-weight: 500; cursor: pointer; transition: background 0.2s;">
+            🗑️ Supprimer
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card" style="padding: 4rem 2rem; text-align: center; border: 1px dashed var(--border); background: var(--bg-card); border-radius: var(--radius-lg);">
+    <div style="font-size: 3rem; margin-bottom: 1.5rem;">📅</div>
+    <h3 style="font-size: 1.25rem; font-weight: 600; color: var(--text); margin-bottom: 0.5rem;">Aucun emploi du temps enregistré</h3>
+    <p style="color: var(--text-muted); font-size: 0.95rem; max-width: 450px; margin: 0 auto 1.5rem auto;">Vous n'avez pas encore généré d'emploi du temps. Remplissez vos données de professeurs et classes, puis lancez la génération !</p>
+    <a href="{{ url_for('generate') }}" class="btn btn-primary" style="text-decoration: none;">Générer mon premier emploi du temps</a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

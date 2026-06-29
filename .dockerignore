@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Python virtual envs
+.venv
+.venv copy
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Local SQLite database (we use Supabase in production)
+school.db
+*.db
+
+# Local data files
+data/school_data.json
+
+# Environment files (secrets go in HF Space secrets, not here)
+.env
+.env.*
+
+# Editor / OS
+.vscode
+.idea
+*.DS_Store
+Thumbs.db

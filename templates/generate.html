@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% block title %}Générer l'Emploi du Temps — Emploi du Temps Scolaire{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ── Generation preferences modal ───────────────────────────────────────── */
+.gen-modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.45);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.gen-modal-backdrop.open { opacity: 1; pointer-events: all; }
+
+.gen-modal {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0,0,0,0.18);
+  padding: 2rem;
+  width: 100%; max-width: 480px;
+  margin: 1rem;
+  transform: translateY(12px);
+  transition: transform 0.25s ease;
+}
+.gen-modal-backdrop.open .gen-modal { transform: translateY(0); }
+
+.gen-modal-title {
+  font-size: 1.2rem; font-weight: 700; color: var(--text);
+  margin: 0 0 0.35rem;
+}
+.gen-modal-sub {
+  font-size: 0.875rem; color: var(--text-muted);
+  margin: 0 0 1.75rem;
+}
+
+.pref-row {
+  margin-bottom: 1.25rem;
+}
+.pref-label {
+  display: block; font-size: 0.85rem; font-weight: 600;
+  color: var(--text); margin-bottom: 0.4rem;
+}
+.pref-desc {
+  font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.5rem;
+}
+.pref-row select, .pref-row input[type=number] {
+  width: 100%; padding: 0.55rem 0.85rem;
+  border: 1.5px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); color: var(--text);
+  font-family: var(--font); font-size: 0.9rem;
+  transition: border-color 0.15s;
+}
+.pref-row select:focus, .pref-row input:focus {
+  outline: none; border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
+}
+
+/* Toggle switch */
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.85rem 1rem;
+  background: var(--bg); border-radius: var(--radius);
+  border: 1.5px solid var(--border);
+}
+.toggle-info { flex: 1; padding-right: 1rem; }
+.toggle-info strong { display: block; font-size: 0.875rem; color: var(--text); }
+.toggle-info span { font-size: 0.78rem; color: var(--text-muted); }
+
+.toggle-switch {
+  position: relative; width: 46px; height: 26px; flex-shrink: 0;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-track {
+  position: absolute; inset: 0; border-radius: 99px;
+  background: var(--border); cursor: pointer;
+  transition: background 0.2s;
+}
+.toggle-track::before {
+  content: ''; position: absolute;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: white; top: 3px; left: 3px;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+.toggle-switch input:checked + .toggle-track { background: var(--primary); }
+.toggle-switch input:checked + .toggle-track::before { transform: translateX(20px); }
+
+.gen-modal-actions {
+  display: flex; gap: 0.75rem; margin-top: 1.75rem;
+}
+.gen-modal-actions .btn { flex: 1; justify-content: center; }
+
+.divider {
+  height: 1px; background: var(--border); margin: 1.25rem 0;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h2>Générer l'Emploi du Temps</h2>
+  <p>Une fois que tout est configuré, cliquez sur le bouton ci-dessous pour créer l'emploi du temps de votre école.</p>
+</div>
+
+<div class="card generate-center">
+  {% if errors %}
+  <div class="alert alert-warning" style="width: 100%; max-width: 520px;">
+    <strong>Veuillez compléter ce qui suit avant de générer :</strong>
+    <ul class="validation-list">
+      {% for error in errors %}
+      <li>{{ error }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% else %}
+  <p style="font-size: 1.125rem; color: var(--text-muted); max-width: 420px;">
+    Toutes les informations requises semblent correctes. Cliquez ci-dessous pour configurer et créer l'emploi du temps.
+  </p>
+  {% endif %}
+
+  <button id="generateBtn" class="btn btn-primary btn-xl"
+          {% if errors %}disabled{% endif %}>
+    ✨ Générer l'Emploi du Temps
+  </button>
+
+  {% if has_schedule %}
+  <a href="{{ url_for('results') }}" class="btn btn-secondary btn-lg">Voir le dernier emploi du temps</a>
+  {% endif %}
+</div>
+
+<div id="errorBox" class="card" style="display: none; margin-top: 1.5rem;">
+  <div class="alert alert-error">
+    <strong>Impossible de générer l'emploi du temps</strong>
+    <ul id="errorList" class="validation-list"></ul>
+  </div>
+</div>
+
+<!-- ── Preferences modal ──────────────────────────────────────────────────── -->
+<div class="gen-modal-backdrop" id="genModalBackdrop">
+  <div class="gen-modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <p class="gen-modal-title" id="modalTitle">⚙️ Options de génération</p>
+    <p class="gen-modal-sub">Ces règles seront appliquées comme contraintes strictes lors de la génération.</p>
+
+    <div class="pref-row">
+      <label class="pref-label" for="maxEntryPeriod">Période d'entrée maximale</label>
+      <p class="pref-desc">Les élèves doivent avoir un cours au plus tard à cette période. "Aucune" = pas de restriction.</p>
+      <select id="maxEntryPeriod">
+        <option value="">Aucune restriction</option>
+        {% for p in range(1, periods_per_day + 1) %}
+        <option value="{{ p }}">Période {{ p }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="pref-row">
+      <label class="pref-label" for="minExitPeriod">Période de sortie minimale</label>
+      <p class="pref-desc">Les élèves doivent rester jusqu'à cette période au minimum. "Aucune" = pas de restriction.</p>
+      <select id="minExitPeriod">
+        <option value="">Aucune restriction</option>
+        {% for p in range(1, periods_per_day + 1) %}
+        <option value="{{ p }}">Période {{ p }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="pref-row">
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <strong>Autoriser les trous dans l'emploi du temps des élèves</strong>
+          <span>Si désactivé, les élèves n'auront jamais de période libre entre deux cours.</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="allowGapsToggle" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="gen-modal-actions">
+      <button class="btn btn-secondary" id="cancelModalBtn">Annuler</button>
+      <button class="btn btn-primary" id="confirmGenerateBtn">🚀 Lancer la génération</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const periodsPerDay = {{ periods_per_day }};
+
+const backdrop   = document.getElementById('genModalBackdrop');
+const generateBtn   = document.getElementById('generateBtn');
+const cancelBtn  = document.getElementById('cancelModalBtn');
+const confirmBtn = document.getElementById('confirmGenerateBtn');
+const overlay    = document.getElementById('loadingOverlay');
+const errorBox   = document.getElementById('errorBox');
+const errorList  = document.getElementById('errorList');
+
+// Open modal
+generateBtn?.addEventListener('click', () => {
+  backdrop.classList.add('open');
+});
+
+// Close modal
+cancelBtn?.addEventListener('click', () => {
+  backdrop.classList.remove('open');
+});
+backdrop.addEventListener('click', (e) => {
+  if (e.target === backdrop) backdrop.classList.remove('open');
+});
+
+// Confirm & launch
+confirmBtn?.addEventListener('click', async () => {
+  backdrop.classList.remove('open');
+  overlay.classList.add('open');
+  generateBtn.disabled = true;
+  errorBox.style.display = 'none';
+
+  const maxEntry = document.getElementById('maxEntryPeriod').value;
+  const minExit  = document.getElementById('minExitPeriod').value;
+  const allowGaps = document.getElementById('allowGapsToggle').checked;
+
+  const payload = { allow_student_gaps: allowGaps };
+  if (maxEntry) payload.max_entry_period = parseInt(maxEntry);
+  if (minExit)  payload.min_exit_period  = parseInt(minExit);
+
+  try {
+    // Step 1: Start the job — returns immediately with a job_id
+    const startRes = await fetch('{{ url_for("generate_run") }}', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const startData = await startRes.json();
+
+    if (!startData.ok) {
+      errorList.innerHTML = (startData.errors || ['Une erreur est survenue.']).map(e => `<li>${e}</li>`).join('');
+      errorBox.style.display = 'block';
+      generateBtn.disabled = false;
+      overlay.classList.remove('open');
+      return;
+    }
+
+    // Step 2: Poll every 3 seconds for the job result
+    const jobId = startData.job_id;
+    const pollInterval = setInterval(async () => {
+      try {
+        const pollRes  = await fetch(`/generate/status/${jobId}`);
+        const pollData = await pollRes.json();
+
+        if (pollData.status === 'done') {
+          clearInterval(pollInterval);
+          window.location.href = pollData.redirect;
+
+        } else if (pollData.status === 'error') {
+          clearInterval(pollInterval);
+          errorList.innerHTML = (pollData.errors || ['Une erreur est survenue.']).map(e => `<li>${e}</li>`).join('');
+          errorBox.style.display = 'block';
+          generateBtn.disabled = false;
+          overlay.classList.remove('open');
+        }
+        // status === 'running' → keep polling silently
+      } catch (_) { /* network blip, retry next tick */ }
+    }, 3000);
+
+  } catch (err) {
+    errorList.innerHTML = '<li>Erreur réseau au démarrage. Veuillez réessayer.</li>';
+    errorBox.style.display = 'block';
+    generateBtn.disabled = false;
+    overlay.classList.remove('open');
+  }
+});
+</script>
+{% endblock %}

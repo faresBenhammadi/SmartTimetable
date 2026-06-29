@@ -1,0 +1,5 @@
+flask>=3.0.0
+ortools>=9.10
+gunicorn
+sqlalchemy
+psycopg2-binary

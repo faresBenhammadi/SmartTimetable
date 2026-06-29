@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Classes — Emploi du Temps Scolaire{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <h2>Classes</h2>
+    <p>Définissez les heures requises et les limites d'enseignants pour chaque classe. Assignez des enseignants aux classes sur la page Enseignants.</p>
+  </div>
+  <button class="btn btn-primary btn-lg" id="addClassBtn">+ Ajouter une Classe</button>
+</div>
+
+{% if not subjects %}
+<div class="alert alert-warning">Ajoutez d'abord des matières avant de créer des classes.</div>
+{% endif %}
+
+<div class="item-list">
+  {% for cls in classes %}
+  <div class="list-item">
+    <div class="list-item-info">
+      <h4>{{ cls.name }}</h4>
+      <p>
+        {% set total = cls.required_hours.values() | sum %}
+        {{ total }} heures/semaine
+        {% if cls.required_hours %}
+        ·
+        {% for subject, hours in cls.required_hours.items() %}
+        {{ subject }}: {{ hours }}{% if not loop.last %}, {% endif %}
+        {% endfor %}
+        {% endif %}
+      </p>
+    </div>
+    <div class="list-item-actions">
+      <button class="btn btn-secondary btn-sm edit-class-btn"
+              data-class='{{ cls | tojson }}'>Modifier</button>
+      <form method="post" action="{{ url_for('delete_class', name=cls.name) }}"
+            onsubmit="return confirm('Supprimer la classe {{ cls.name }} ?')">
+        <button type="submit" class="btn btn-danger btn-sm">Supprimer</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">📚</div>
+    <h3>Pas encore de classes</h3>
+    <p>Cliquez sur "Ajouter une Classe" pour créer votre première classe.</p>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Class Modal -->
+<div class="modal-overlay" id="classModal">
+  <div class="modal" style="max-width: 640px;">
+    <div class="modal-header">
+      <h3 id="classModalTitle">Ajouter une Classe</h3>
+      <button class="modal-close" id="closeClassModal">&times;</button>
+    </div>
+
+    <input type="hidden" id="originalClassName">
+
+    <div class="form-group">
+      <label class="form-label" for="className">Nom de la classe</label>
+      <input type="text" id="className" class="form-input" placeholder="ex: 4A">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Heures hebdomadaires requises</label>
+      <div class="hours-grid" id="requiredHoursGrid">
+        {% for subject in subjects %}
+        <div class="hours-item">
+          <label for="hours_{{ loop.index }}">{{ subject }}</label>
+          <input type="number" id="hours_{{ loop.index }}" class="form-input hours-input"
+                 data-subject="{{ subject }}" min="0" max="20" value="0">
+        </div>
+        {% endfor %}
+      </div>
+      {% if not subjects %}
+      <p class="form-hint">Aucune matière disponible. Ajoutez d'abord des matières.</p>
+      {% endif %}
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Nombre maximum d'enseignants par matière</label>
+      <div class="hours-grid" id="maxTeachersGrid">
+        {% for subject in subjects %}
+        <div class="hours-item">
+          <label for="max_{{ loop.index }}">{{ subject }}</label>
+          <input type="number" id="max_{{ loop.index }}" class="form-input max-teachers-input"
+                 data-subject="{{ subject }}" min="1" max="10" value="1">
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="cancelClassModal">Annuler</button>
+      <button class="btn btn-primary" id="saveClass">Enregistrer la Classe</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const classModal = document.getElementById('classModal');
+const originalNameInput = document.getElementById('originalClassName');
+
+function openClassModal(cls = null) {
+  document.getElementById('classModalTitle').textContent = cls ? 'Modifier la Classe' : 'Ajouter une Classe';
+  originalNameInput.value = cls ? cls.name : '';
+  document.getElementById('className').value = cls ? cls.name : '';
+
+  document.querySelectorAll('.hours-input').forEach(input => {
+    const subj = input.dataset.subject;
+    input.value = cls && cls.required_hours[subj] ? cls.required_hours[subj] : 0;
+  });
+
+  document.querySelectorAll('.max-teachers-input').forEach(input => {
+    const subj = input.dataset.subject;
+    input.value = cls && cls.max_teachers[subj] ? cls.max_teachers[subj] : 1;
+  });
+
+  classModal.classList.add('open');
+}
+
+function closeClassModalFn() {
+  classModal.classList.remove('open');
+}
+
+document.getElementById('addClassBtn').addEventListener('click', () => openClassModal());
+document.getElementById('closeClassModal').addEventListener('click', closeClassModalFn);
+document.getElementById('cancelClassModal').addEventListener('click', closeClassModalFn);
+classModal.addEventListener('click', e => { if (e.target === classModal) closeClassModalFn(); });
+
+document.querySelectorAll('.edit-class-btn').forEach(btn => {
+  btn.addEventListener('click', () => openClassModal(JSON.parse(btn.dataset.class)));
+});
+
+document.getElementById('saveClass').addEventListener('click', async () => {
+  const name = document.getElementById('className').value.trim();
+  if (!name) { alert('Veuillez entrer un nom de classe.'); return; }
+
+  const required_hours = {};
+  document.querySelectorAll('.hours-input').forEach(input => {
+    const val = parseInt(input.value) || 0;
+    if (val > 0) required_hours[input.dataset.subject] = val;
+  });
+
+  const max_teachers = {};
+  document.querySelectorAll('.max-teachers-input').forEach(input => {
+    const subj = input.dataset.subject;
+    if (required_hours[subj]) {
+      max_teachers[subj] = parseInt(input.value) || 1;
+    }
+  });
+
+  const payload = {
+    original_name: originalNameInput.value || null,
+    name,
+    required_hours,
+    max_teachers,
+  };
+
+  const res = await fetch('{{ url_for("save_class") }}', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (data.ok) {
+    window.location.reload();
+  } else {
+    alert(data.error || "Impossible d'enregistrer la classe.");
+  }
+});
+</script>
+{% endblock %}

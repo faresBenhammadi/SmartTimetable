@@ -1,0 +1,26 @@
+# Local SQLite database (production uses Supabase)
+school.db
+*.db
+
+# Python virtual environments
+.venv
+.venv copy
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment / secrets
+.env
+.env.*
+
+# Editor / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Local data
+data/school_data.json

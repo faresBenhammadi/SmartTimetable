@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Préférences de Matière — Emploi du Temps Scolaire{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h2>Préférences de Matière</h2>
+  <p>Cliquez sur les créneaux pour marquer quand chaque matière est préférée (ex: l'arabe le matin). <strong>Les créneaux sélectionnés sont obligatoires</strong> — les cours ne sont planifiés que dans les créneaux préférés pour cette matière.</p>
+</div>
+
+{% if not subjects %}
+<div class="empty-state">
+  <div class="empty-state-icon">⭐</div>
+  <h3>Pas encore de matières</h3>
+  <p>Ajoutez d'abord des matières, puis définissez leurs créneaux préférés ici.</p>
+  <a href="{{ url_for('subjects') }}" class="btn btn-primary btn-lg" style="margin-top: 1rem;">Aller aux Matières</a>
+</div>
+{% elif not days %}
+<div class="alert alert-warning">
+  Configurez d'abord les créneaux horaires.
+  <a href="{{ url_for('timeslots') }}">Aller aux Créneaux Horaires</a>
+</div>
+{% else %}
+
+<div class="grid-legend">
+  <div class="legend-item"><div class="legend-swatch"></div> Non préféré</div>
+  <div class="legend-item"><div class="legend-swatch selected-pref"></div> Créneau préféré</div>
+</div>
+
+<div id="preferencesContainer">
+  {% for subject in subjects %}
+  <div class="subject-pref-section card" data-subject="{{ subject }}">
+    <h3 class="card-title">{{ subject }}</h3>
+    <p class="form-hint">Cliquez sur les cellules pour marquer les créneaux préférés pour {{ subject }}.</p>
+    <div class="timetable-grid-wrapper">
+      <table class="timetable-grid pref-grid" data-subject="{{ subject }}"></table>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<button class="btn btn-primary btn-lg" id="savePreferences" style="margin-top: 1.5rem;">
+  Enregistrer les Préférences
+</button>
+<span id="saveStatus" style="margin-left: 1rem; color: var(--success); font-weight: 600; display: none;">Enregistré !</span>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if subjects and days %}
+<script>
+const GRID_DAYS = {{ days | tojson }};
+const GRID_PERIODS_BY_DAY = {{ periods_by_day | tojson }};
+const MAX_PERIODS = Math.max(...Object.values(GRID_PERIODS_BY_DAY), 0);
+const INITIAL_PREFS = {{ preferences | tojson }};
+
+const preferences = { ...INITIAL_PREFS };
+
+const DAY_SHORT_TRANSLATIONS = {
+  'Sunday': 'Dim',
+  'Monday': 'Lun',
+  'Tuesday': 'Mar',
+  'Wednesday': 'Mer',
+  'Thursday': 'Jeu',
+  'Friday': 'Ven',
+  'Saturday': 'Sam'
+};
+
+function buildPrefGrid(table, subject) {
+  table.innerHTML = '';
+  const selected = new Set(preferences[subject] || []);
+
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  headRow.innerHTML = '<th></th>';
+  for (let p = 1; p <= MAX_PERIODS; p++) headRow.innerHTML += `<th>P${p}</th>`;
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  GRID_DAYS.forEach(day => {
+    const periods = GRID_PERIODS_BY_DAY[day] || 0;
+    const row = document.createElement('tr');
+    const displayDay = DAY_SHORT_TRANSLATIONS[day] || day.slice(0, 3);
+    row.innerHTML = `<td class="row-label">${displayDay}</td>`;
+    for (let p = 1; p <= periods; p++) {
+      const key = `${day}-${p}`;
+      const cell = document.createElement('td');
+      const div = document.createElement('div');
+      div.className = 'grid-cell' + (selected.has(key) ? ' pref-selected' : '');
+      div.dataset.key = key;
+      div.addEventListener('click', () => {
+        if (!preferences[subject]) preferences[subject] = [];
+        const idx = preferences[subject].indexOf(key);
+        if (idx >= 0) {
+          preferences[subject].splice(idx, 1);
+          div.classList.remove('pref-selected');
+        } else {
+          preferences[subject].push(key);
+          div.classList.add('pref-selected');
+        }
+      });
+      cell.appendChild(div);
+      row.appendChild(cell);
+    }
+    for (let p = periods; p < MAX_PERIODS; p++) {
+      const cell = document.createElement('td');
+      cell.className = 'empty-cell';
+      row.appendChild(cell);
+    }
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+}
+
+document.querySelectorAll('.pref-grid').forEach(table => {
+  buildPrefGrid(table, table.dataset.subject);
+});
+
+document.getElementById('savePreferences').addEventListener('click', async () => {
+  const cleaned = {};
+  for (const [subj, keys] of Object.entries(preferences)) {
+    if (keys && keys.length) cleaned[subj] = keys;
+  }
+
+  const res = await fetch('{{ url_for("save_preferences") }}', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ preferences: cleaned }),
+  });
+  const data = await res.json();
+  if (data.ok) {
+    const status = document.getElementById('saveStatus');
+    status.style.display = 'inline';
+    setTimeout(() => { status.style.display = 'none'; }, 2000);
+  }
+});
+</script>
+{% endif %}
+{% endblock %}

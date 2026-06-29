@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Accueil — Emploi du Temps Scolaire{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h2>Bienvenue</h2>
+  <p>Configurez les données de votre école, puis générez un emploi du temps hebdomadaire complet.</p>
+</div>
+
+<div class="card-grid">
+  <a href="{{ url_for('teachers') }}" class="dashboard-card">
+    <div class="dashboard-card-icon blue">👩‍🏫</div>
+    <h3>Enseignants</h3>
+    <p>Ajoutez des enseignants, leurs matières et leur disponibilité hebdomadaire.</p>
+    <span class="stat">{{ stats.teachers }}</span>
+  </a>
+
+  <a href="{{ url_for('classes') }}" class="dashboard-card">
+    <div class="dashboard-card-icon green">📚</div>
+    <h3>Classes</h3>
+    <p>Définissez les heures requises et les limites d'enseignants pour chaque classe.</p>
+    <span class="stat">{{ stats.classes }}</span>
+  </a>
+
+  <a href="{{ url_for('subjects') }}" class="dashboard-card">
+    <div class="dashboard-card-icon purple">📖</div>
+    <h3>Matières</h3>
+    <p>Gérez les matières enseignées dans votre école.</p>
+    <span class="stat">{{ stats.subjects }}</span>
+  </a>
+
+  <a href="{{ url_for('timeslots') }}" class="dashboard-card">
+    <div class="dashboard-card-icon orange">🕐</div>
+    <h3>Créneaux Horaires</h3>
+    <p>Choisissez les jours d'école et les périodes par jour.</p>
+    <span class="stat">{{ stats.timeslots }}</span>
+  </a>
+
+  <a href="{{ url_for('preferences') }}" class="dashboard-card">
+    <div class="dashboard-card-icon pink">⭐</div>
+    <h3>Préférences de Matière</h3>
+    <p>Définissez les créneaux horaires préférés pour chaque matière.</p>
+  </a>
+
+  <a href="{{ url_for('generate') }}" class="dashboard-card">
+    <div class="dashboard-card-icon indigo">✨</div>
+    <h3>Générer l'Emploi du Temps</h3>
+    <p>Créez un emploi du temps complet pour toutes les classes et tous les enseignants.</p>
+  </a>
+</div>
+
+{% if has_schedule %}
+<div class="card" style="margin-top: 2rem; text-align: center;">
+  <p style="font-size: 1.125rem; margin: 0 0 1rem;">Vous avez déjà un emploi du temps généré.</p>
+  <a href="{{ url_for('results') }}" class="btn btn-primary btn-lg">Voir l'Emploi du Temps</a>
+</div>
+{% endif %}
+{% endblock %}

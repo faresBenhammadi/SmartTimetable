@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}Enseignants — Emploi du Temps Scolaire{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <h2>Enseignants</h2>
+    <p>Ajoutez des enseignants, choisissez les classes qu'ils peuvent enseigner et définissez leur disponibilité hebdomadaire.</p>
+  </div>
+  <button class="btn btn-primary btn-lg" id="addTeacherBtn">+ Ajouter un Enseignant</button>
+</div>
+
+{% if not subjects %}
+<div class="alert alert-warning">Ajoutez d'abord des matières avant de créer des enseignants.</div>
+{% endif %}
+
+<div class="item-list" id="teacherList">
+  {% for teacher in teachers %}
+  <div class="list-item" data-teacher-id="{{ teacher.id }}">
+    <div class="list-item-info">
+      <h4>{{ teacher.name }}</h4>
+      <p>
+        {% if teacher.subjects %}
+        <span class="tag-list">
+          {% for s in teacher.subjects %}<span class="tag">{{ s }}</span>{% endfor %}
+        </span>
+        {% else %}
+        Aucune matière assignée
+        {% endif %}
+        · Requis : {{ teacher.required_hours_per_week or teacher.max_hours_per_week }} h/semaine
+      </p>
+    </div>
+    <div class="list-item-actions">
+      <button class="btn btn-secondary btn-sm edit-teacher-btn"
+              data-teacher='{{ teacher | tojson }}'>Modifier</button>
+      <form method="post" action="{{ url_for('delete_teacher', teacher_id=teacher.id) }}"
+            onsubmit="return confirm('Supprimer {{ teacher.name }} ?')">
+        <button type="submit" class="btn btn-danger btn-sm">Supprimer</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <div class="empty-state" id="emptyTeachers">
+    <div class="empty-state-icon">👩‍🏫</div>
+    <h3>Pas encore d'enseignants</h3>
+    <p>Cliquez sur "Ajouter un Enseignant" pour créer votre premier enseignant.</p>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Teacher Modal -->
+<div class="modal-overlay" id="teacherModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle">Ajouter un Enseignant</h3>
+      <button class="modal-close" id="closeModal">&times;</button>
+    </div>
+
+    <input type="hidden" id="teacherId">
+
+    <div class="form-group">
+      <label class="form-label" for="teacherName">Nom</label>
+      <input type="text" id="teacherName" class="form-input" placeholder="ex: Ahmed">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Matières enseignées</label>
+      <div class="checkbox-grid" id="subjectCheckboxes">
+        {% for subject in subjects %}
+        <label class="checkbox-item">
+          <input type="checkbox" value="{{ subject }}"> {{ subject }}
+        </label>
+        {% endfor %}
+      </div>
+      {% if not subjects %}
+      <p class="form-hint">Aucune matière disponible. Ajoutez d'abord des matières.</p>
+      {% endif %}
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Classes que cet enseignant peut enseigner</label>
+      <div class="checkbox-grid" id="classCheckboxes">
+        {% for cls in classes %}
+        <label class="checkbox-item">
+          <input type="checkbox" value="{{ cls }}"> {{ cls }}
+        </label>
+        {% else %}
+        <p class="form-hint">Pas encore de classes. Vous pourrez en ajouter plus tard et modifier cet enseignant.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="requiredHours">Heures requises par semaine</label>
+      <input type="number" id="requiredHours" class="form-input" min="1" max="40" value="30">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Disponibilité hebdomadaire</label>
+      <p class="form-hint">Cliquez sur chaque cellule pour basculer : Disponible → Préféré → Indisponible</p>
+      <div class="grid-legend">
+        <div class="legend-item"><div class="legend-swatch available"></div> Disponible</div>
+        <div class="legend-item"><div class="legend-swatch preferred"></div> Préféré</div>
+        <div class="legend-item"><div class="legend-swatch unavailable"></div> Indisponible</div>
+      </div>
+      <div class="timetable-grid-wrapper">
+        <table class="timetable-grid" id="availabilityGrid"></table>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="cancelModal">Annuler</button>
+      <button class="btn btn-primary" id="saveTeacher">Enregistrer l'Enseignant</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const GRID_DAYS = {{ days | tojson }};
+const GRID_PERIODS_BY_DAY = {{ periods_by_day | tojson }};
+const MAX_PERIODS = Math.max(...Object.values(GRID_PERIODS_BY_DAY), 0);
+const AVAILABILITY_CYCLE = ['available', 'preferred', 'unavailable'];
+
+const DAY_TRANSLATIONS = {
+  'Sunday': 'Dimanche',
+  'Monday': 'Lundi',
+  'Tuesday': 'Mardi',
+  'Wednesday': 'Mercredi',
+  'Thursday': 'Jeudi',
+  'Friday': 'Vendredi',
+  'Saturday': 'Samedi'
+};
+
+const DAY_SHORT_TRANSLATIONS = {
+  'Sunday': 'Dim',
+  'Monday': 'Lun',
+  'Tuesday': 'Mar',
+  'Wednesday': 'Mer',
+  'Thursday': 'Jeu',
+  'Friday': 'Ven',
+  'Saturday': 'Sam'
+};
+
+const STATUS_TRANSLATIONS = {
+  'available': 'Disponible',
+  'preferred': 'Préféré',
+  'unavailable': 'Indisponible'
+};
+
+let availability = {};
+
+function buildGrid(containerId, onClick) {
+  const table = document.getElementById(containerId);
+  table.innerHTML = '';
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  headRow.innerHTML = '<th></th>';
+  for (let p = 1; p <= MAX_PERIODS; p++) {
+    headRow.innerHTML += `<th>P${p}</th>`;
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  GRID_DAYS.forEach(day => {
+    const periods = GRID_PERIODS_BY_DAY[day] || 0;
+    const row = document.createElement('tr');
+    const displayDay = DAY_SHORT_TRANSLATIONS[day] || day.slice(0, 3);
+    row.innerHTML = `<td class="row-label">${displayDay}</td>`;
+    for (let p = 1; p <= periods; p++) {
+      const key = `${day}-${p}`;
+      const status = availability[key] || 'available';
+      const cell = document.createElement('td');
+      const div = document.createElement('div');
+      div.className = `grid-cell status-${status}`;
+      div.dataset.key = key;
+      div.title = `${DAY_TRANSLATIONS[day] || day} Période ${p} : ${STATUS_TRANSLATIONS[status] || status}`;
+      div.addEventListener('click', () => onClick(key, div));
+      cell.appendChild(div);
+      row.appendChild(cell);
+    }
+    for (let p = periods; p < MAX_PERIODS; p++) {
+      const cell = document.createElement('td');
+      cell.className = 'empty-cell';
+      row.appendChild(cell);
+    }
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+}
+
+function cycleAvailability(key, el) {
+  const current = availability[key] || 'available';
+  const idx = AVAILABILITY_CYCLE.indexOf(current);
+  const next = AVAILABILITY_CYCLE[(idx + 1) % AVAILABILITY_CYCLE.length];
+  availability[key] = next;
+  el.className = `grid-cell status-${next}`;
+  const [day, period] = key.split('-');
+  el.title = `${DAY_TRANSLATIONS[day] || day} Période ${period} : ${STATUS_TRANSLATIONS[next] || next}`;
+}
+
+const modal = document.getElementById('teacherModal');
+const teacherIdInput = document.getElementById('teacherId');
+
+function openModal(teacher = null) {
+  document.getElementById('modalTitle').textContent = teacher ? "Modifier l'Enseignant" : "Ajouter un Enseignant";
+  teacherIdInput.value = teacher ? teacher.id : '';
+  document.getElementById('teacherName').value = teacher ? teacher.name : '';
+  document.getElementById('requiredHours').value = teacher
+    ? (teacher.required_hours_per_week || teacher.max_hours_per_week || 30)
+    : 30;
+
+  document.querySelectorAll('#subjectCheckboxes input').forEach(cb => {
+    cb.checked = teacher && teacher.subjects.includes(cb.value);
+    cb.closest('.checkbox-item').classList.toggle('selected', cb.checked);
+  });
+  document.querySelectorAll('#classCheckboxes input').forEach(cb => {
+    cb.checked = teacher && teacher.allowed_classes.includes(cb.value);
+    cb.closest('.checkbox-item').classList.toggle('selected', cb.checked);
+  });
+
+  availability = teacher ? { ...teacher.availability } : {};
+  buildGrid('availabilityGrid', cycleAvailability);
+  modal.classList.add('open');
+}
+
+function closeModalFn() {
+  modal.classList.remove('open');
+}
+
+document.getElementById('addTeacherBtn').addEventListener('click', () => openModal());
+document.getElementById('closeModal').addEventListener('click', closeModalFn);
+document.getElementById('cancelModal').addEventListener('click', closeModalFn);
+modal.addEventListener('click', e => { if (e.target === modal) closeModalFn(); });
+
+document.querySelectorAll('.edit-teacher-btn').forEach(btn => {
+  btn.addEventListener('click', () => openModal(JSON.parse(btn.dataset.teacher)));
+});
+
+document.querySelectorAll('.checkbox-item input').forEach(cb => {
+  cb.addEventListener('change', () => {
+    cb.closest('.checkbox-item').classList.toggle('selected', cb.checked);
+  });
+});
+
+document.getElementById('saveTeacher').addEventListener('click', async () => {
+  const name = document.getElementById('teacherName').value.trim();
+  if (!name) { alert("Veuillez entrer un nom d'enseignant."); return; }
+
+  const requiredHours = parseInt(document.getElementById('requiredHours').value) || 30;
+  const payload = {
+    id: teacherIdInput.value ? parseInt(teacherIdInput.value) : null,
+    name,
+    subjects: [...document.querySelectorAll('#subjectCheckboxes input:checked')].map(cb => cb.value),
+    allowed_classes: [...document.querySelectorAll('#classCheckboxes input:checked')].map(cb => cb.value),
+    required_hours_per_week: requiredHours,
+    max_hours_per_week: requiredHours,
+    availability,
+  };
+
+  const res = await fetch('{{ url_for("save_teacher") }}', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (data.ok) {
+    window.location.reload();
+  } else {
+    alert(data.error || "Impossible d'enregistrer l'enseignant.");
+  }
+});
+</script>
+{% endblock %}
