@@ -7,7 +7,7 @@ t0 = time.perf_counter()
 from ortools.sat.python import cp_model
 
 from school import Assignment, Schedule
-
+WORKING_DAY_WEIGHT = 50
 TEACHER_PREFERENCE_WEIGHT = 10
 BLOCK_PENALTY_WEIGHT = 250
 SUBJECT_PREFERENCE_WEIGHT = 200
@@ -388,6 +388,33 @@ def _add_class_continuity_penalty(model, ctx, objective_terms):
 
                 objective_terms.append(CLASS_SWITCH_WEIGHT * switch)
 
+def _add_teacher_working_days_penalty(model, ctx, objective_terms):
+    """
+    Soft objective:
+    Prefer schedules where each teacher works on fewer days.
+
+    Uses one BoolVar per (teacher, day), so the overhead is very small.
+    """
+    for teacher in ctx.school.teachers:
+        for day in ctx.days:
+            busy_periods = []
+
+            for period in ctx.all_periods:
+                busy = ctx.teacher_busy(teacher, day, period)
+                if busy is not None:
+                    busy_periods.append(busy)
+
+            if not busy_periods:
+                continue
+
+            works_today = ctx.new_bool()
+
+            model.AddBoolOr(busy_periods).OnlyEnforceIf(works_today)
+            model.AddBoolAnd([b.Not() for b in busy_periods]).OnlyEnforceIf(
+                works_today.Not()
+            )
+
+            objective_terms.append(WORKING_DAY_WEIGHT * works_today)
 
 def _add_teacher_gap_penalty(model, ctx, objective_terms):
     for teacher in ctx.school.teachers:
@@ -721,6 +748,7 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
     _add_class_continuity_penalty(model, ctx, objective_terms)
     _add_teacher_gap_penalty(model, ctx, objective_terms)
     _add_class_gap_penalty(model, ctx, objective_terms)
+    _add_teacher_working_days_penalty(model, ctx, objective_terms)
 
     print("Model build time:", time.perf_counter() - t0, "seconds")
     solver = cp_model.CpSolver()
