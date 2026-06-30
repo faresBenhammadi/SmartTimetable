@@ -165,7 +165,7 @@ def inject_globals():
     ]
     
     if session.get("is_admin"):
-        nav_items.append(("admin_dashboard", "Admin Panel", "users"))
+        nav_items.append(("admin_dashboard", "Administration", "users"))
         
     return {
         "nav_items": nav_items,

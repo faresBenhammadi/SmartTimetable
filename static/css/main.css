@@ -935,13 +935,62 @@ a {
   }
 
   .nav-list {
-    flex-direction: row;
-    flex-wrap: wrap;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.5rem;
+    scrollbar-width: none;
+  }
+  .nav-list::-webkit-scrollbar {
+    display: none;
+  }
+  .nav-list li {
+    flex: 0 0 auto !important;
   }
 
   .nav-link {
     padding: 0.625rem 0.875rem;
     font-size: 0.9375rem;
+    white-space: nowrap;
+  }
+
+  /* Modal responsiveness */
+  .modal {
+    padding: 1.25rem !important;
+    margin: 0.5rem !important;
+    max-height: 95vh !important;
+    width: calc(100% - 1rem) !important;
+  }
+  .modal-header h3 {
+    font-size: 1.25rem !important;
+  }
+  .timetable-grid-wrapper {
+    overflow-x: auto !important;
+  }
+  .timetable-grid {
+    min-width: 480px !important;
+  }
+
+  /* Generation Preferences Modal scroll */
+  .gen-modal {
+    padding: 1.25rem !important;
+    margin: 0.5rem !important;
+    max-height: 90vh !important;
+    overflow-y: auto !important;
+    width: calc(100% - 1rem) !important;
+  }
+
+  /* Results tab button wrapping */
+  .tabs {
+    flex-wrap: wrap !important;
+    gap: 0.25rem !important;
+  }
+  .tab-btn {
+    flex: 1 1 auto !important;
+    padding: 0.75rem 1rem !important;
+    font-size: 0.9rem !important;
+    text-align: center !important;
   }
 
   /* Mobile Responsive Table Optimization */

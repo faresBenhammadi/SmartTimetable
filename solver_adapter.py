@@ -358,7 +358,7 @@ def _find_class_by_name(classes, name):
 def _build_schedule_from_serialized(school, serialized_schedule):
     entries = serialized_schedule.get("entries") or []
     if not entries:
-        return None, "Schedule does not include metadata required for swapping. Generate a fresh timetable." 
+        return None, "L'emploi du temps ne contient pas les métadonnées nécessaires. Veuillez en générer un nouveau."
 
     schedule = Schedule()
     assigned_sessions = set()
@@ -371,7 +371,7 @@ def _build_schedule_from_serialized(school, serialized_schedule):
         timeslot = _get_timeslot_by_key(school.timeslots, entry.get("time"))
 
         if cls is None or teacher is None or timeslot is None:
-            return None, "Schedule metadata is invalid or out of sync with current configuration."
+            return None, "Les métadonnées de l'emploi du temps sont invalides ou désynchronisées avec la configuration actuelle."
 
         candidates = [
             s for s in school.sessions
@@ -391,7 +391,7 @@ def _build_schedule_from_serialized(school, serialized_schedule):
 
 def try_swap_class_cells(user_id, serialized_schedule, class_name, time_a, time_b):
     if time_a == time_b:
-        return False, "Select two different time slots to move or swap."
+        return False, "Veuillez sélectionner deux créneaux différents pour déplacer ou échanger."
 
     entries = serialized_schedule.get("entries") or []
     entry_a = next((e for e in entries if e.get("class") == class_name and e.get("time") == time_a), None)
@@ -406,7 +406,7 @@ def try_swap_class_cells(user_id, serialized_schedule, class_name, time_a, time_
     timeslot_a = _get_timeslot_by_key(school.timeslots, time_a)
     timeslot_b = _get_timeslot_by_key(school.timeslots, time_b)
     if timeslot_a is None or timeslot_b is None:
-        return False, "Selected time slots are invalid."
+        return False, "Les créneaux sélectionnés sont invalides."
 
     session_a = next(
         (s for s, a in schedule_obj.assignments.items()
@@ -420,24 +420,24 @@ def try_swap_class_cells(user_id, serialized_schedule, class_name, time_a, time_
     )
 
     if entry_a is None and entry_b is None:
-        return False, "At least one selected slot must contain a scheduled lesson."
+        return False, "Au moins un créneau sélectionné doit contenir un cours planifié."
 
     assignment_a = schedule_obj.assignments.get(session_a) if session_a else None
     assignment_b = schedule_obj.assignments.get(session_b) if session_b else None
 
     if entry_a is not None and entry_b is not None:
         if session_a is None or session_b is None:
-            return False, "Unable to identify selected sessions in the timetable."
+            return False, "Impossible d'identifier les séances sélectionnées dans l'emploi du temps."
         swap_session = session_a
         swap_session_b = session_b
     elif entry_a is not None and entry_b is None:
         if session_a is None:
-            return False, "Unable to identify the selected lesson in the timetable."
+            return False, "Impossible d'identifier le cours sélectionné dans l'emploi du temps."
         swap_session = session_a
         target_timeslot = timeslot_b
     else:
         if session_b is None:
-            return False, "Unable to identify the selected lesson in the timetable."
+            return False, "Impossible d'identifier le cours sélectionné dans l'emploi du temps."
         swap_session = session_b
         target_timeslot = timeslot_a
 
@@ -469,7 +469,7 @@ def try_swap_class_cells(user_id, serialized_schedule, class_name, time_a, time_
             new_schedule,
             ignore_subject_slot_allowed=True,
         ):
-            return False, "Move would break a hard scheduling constraint."
+            return False, "Ce déplacement enfreindrait une contrainte de planification obligatoire."
 
     min_violations = school.validate_min_per_day_schedule(new_schedule)
     if min_violations:
@@ -481,14 +481,14 @@ def try_swap_class_cells(user_id, serialized_schedule, class_name, time_a, time_
 
 def try_swap_teacher_cells(user_id, serialized_schedule, teacher_name, time_a, time_b):
     if time_a == time_b:
-        return False, "Select two different time slots to swap." 
+        return False, "Veuillez sélectionner deux créneaux différents pour échanger."
 
     entries = serialized_schedule.get("entries") or []
     entry_a = next((e for e in entries if e.get("teacher") == teacher_name and e.get("time") == time_a), None)
     entry_b = next((e for e in entries if e.get("teacher") == teacher_name and e.get("time") == time_b), None)
 
     if entry_a is None or entry_b is None:
-        return False, "Both selected cells must contain the same teacher's scheduled lessons."
+        return False, "Les deux créneaux sélectionnés doivent contenir des cours de l'enseignant."
 
     school = build_school_from_store(user_id)
     school.generate_sessions()
@@ -499,7 +499,7 @@ def try_swap_teacher_cells(user_id, serialized_schedule, teacher_name, time_a, t
     timeslot_a = _get_timeslot_by_key(school.timeslots, time_a)
     timeslot_b = _get_timeslot_by_key(school.timeslots, time_b)
     if timeslot_a is None or timeslot_b is None:
-        return False, "Selected time slots are invalid."
+        return False, "Les créneaux sélectionnés sont invalides."
 
     session_a = next(
         (s for s, a in schedule_obj.assignments.items()
@@ -513,7 +513,7 @@ def try_swap_teacher_cells(user_id, serialized_schedule, teacher_name, time_a, t
     )
 
     if session_a is None or session_b is None:
-        return False, "Unable to identify selected teacher sessions in the timetable."
+        return False, "Impossible d'identifier les séances de l'enseignant sélectionné."
 
     new_schedule = Schedule()
     for session, assignment in schedule_obj.assignments.items():
@@ -532,7 +532,7 @@ def try_swap_teacher_cells(user_id, serialized_schedule, teacher_name, time_a, t
             new_schedule,
             ignore_subject_slot_allowed=True,
         ):
-            return False, "Swap would break a hard scheduling constraint."
+            return False, "Cet échange enfreindrait une contrainte de planification obligatoire."
 
     min_violations = school.validate_min_per_day_schedule(new_schedule)
     if min_violations:
