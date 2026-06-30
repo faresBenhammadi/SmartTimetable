@@ -2,7 +2,8 @@
 
 import os
 from collections import defaultdict
-
+import time
+t0 = time.perf_counter()
 from ortools.sat.python import cp_model
 
 from school import Assignment, Schedule
@@ -721,6 +722,7 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
     _add_teacher_gap_penalty(model, ctx, objective_terms)
     _add_class_gap_penalty(model, ctx, objective_terms)
 
+    print("Model build time:", time.perf_counter() - t0, "seconds")
     solver = cp_model.CpSolver()
     _configure_solver(solver, time_limit_seconds)
 
@@ -728,6 +730,14 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
     phase1_limit = min(30.0, time_limit_seconds * 0.15)
     solver.parameters.max_time_in_seconds = phase1_limit
     status = solver.Solve(model)
+    print("=== PHASE 1 ===")
+    print("Status:", solver.StatusName(status))
+    print("Wall time:", solver.WallTime())
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        print("Objective:", solver.ObjectiveValue())
+        print("Best bound:", solver.BestObjectiveBound())
+    print("Conflicts:", solver.NumConflicts())
+    print("Branches:", solver.NumBranches())
 
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         for entries in assign.values():
@@ -738,6 +748,15 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
             remaining = max(5.0, time_limit_seconds - phase1_limit)
             solver.parameters.max_time_in_seconds = remaining
             status = solver.Solve(model)
+            print("=== PHASE 2 ===")
+            print("Total time:", time.perf_counter() - t0, "seconds")
+            print("Status:", solver.StatusName(status))
+            print("Wall time:", solver.WallTime())
+            if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                print("Objective:", solver.ObjectiveValue())
+                print("Best bound:", solver.BestObjectiveBound())
+            print("Conflicts:", solver.NumConflicts())
+            print("Branches:", solver.NumBranches())
     elif status == cp_model.UNKNOWN and objective_terms:
         model.Minimize(sum(objective_terms))
         solver.parameters.max_time_in_seconds = time_limit_seconds
