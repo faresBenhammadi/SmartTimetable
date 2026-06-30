@@ -658,6 +658,7 @@ def _add_no_student_gap_constraint(model, school, sessions, assign):
                 ])
 
 
+def _set_quality_objective(model, assign, school, sessions):
     objective_terms = []
     for entries in assign.values():
         for _, _, var, teacher_penalty in entries:
@@ -676,6 +677,7 @@ def _add_no_student_gap_constraint(model, school, sessions, assign):
     
     if objective_terms:
         model.Minimize(sum(objective_terms))
+
 
 
 def _configure_solver(solver, time_limit_seconds):
