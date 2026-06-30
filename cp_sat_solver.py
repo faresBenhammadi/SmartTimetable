@@ -1,15 +1,94 @@
 """OR-Tools CP-SAT solver for school timetabling."""
 
+import os
+from collections import defaultdict
+
 from ortools.sat.python import cp_model
 
 from school import Assignment, Schedule
 
 TEACHER_PREFERENCE_WEIGHT = 10
 BLOCK_PENALTY_WEIGHT = 250
-SUBJECT_PREFERENCE_WEIGHT = 200 
+SUBJECT_PREFERENCE_WEIGHT = 200
 CLASS_SWITCH_WEIGHT = 300
 TEACHER_GAP_WEIGHT = 300
 CLASS_GAP_WEIGHT = 150
+
+
+class _ModelContext:
+    """Pre-built indexes and shared auxiliary variables for one CP-SAT model."""
+
+    def __init__(self, model, school, sessions, assign):
+        self.model = model
+        self.school = school
+        self.sessions = sessions
+        self.assign = assign
+        self.days = sorted({ts.day for ts in school.timeslots})
+        self.all_periods = sorted({ts.period for ts in school.timeslots})
+        self._var_id = 0
+
+        self.by_teacher_slot = defaultdict(list)
+        self.by_class_slot = defaultdict(list)
+        self.by_class_subject = defaultdict(list)
+        self.by_teacher_day_period = defaultdict(list)
+        self.by_class_day_period = defaultdict(list)
+        self.by_class_subject_day_period = defaultdict(list)
+        self.by_teacher = defaultdict(list)
+        self.by_class = defaultdict(list)
+
+        self._teacher_busy = {}
+        self._class_busy = {}
+
+        for session in sessions:
+            school_class = session.school_class
+            for teacher, ts, var, _ in assign[session]:
+                self.by_teacher_slot[(teacher, ts)].append(var)
+                self.by_class_slot[(school_class, ts)].append(var)
+                self.by_class_subject[(school_class, session.subject)].append(
+                    (session, ts, var)
+                )
+                self.by_teacher_day_period[(teacher, ts.day, ts.period)].append(var)
+                self.by_class_day_period[(school_class, ts.day, ts.period)].append(var)
+                self.by_class_subject_day_period[
+                    (school_class, session.subject, ts.day, ts.period)
+                ].append(var)
+                self.by_teacher[teacher].append(var)
+                self.by_class[school_class].append(var)
+
+    def new_bool(self):
+        self._var_id += 1
+        return self.model.NewBoolVar(f"v{self._var_id}")
+
+    def _reify_has_any(self, literals):
+        """Return a BoolVar that is true iff at least one literal in the list is true."""
+        if not literals:
+            return None
+        has = self.new_bool()
+        self.model.Add(sum(literals) >= 1).OnlyEnforceIf(has)
+        self.model.Add(sum(literals) == 0).OnlyEnforceIf(has.Not())
+        return has
+
+    def teacher_busy(self, teacher, day, period):
+        key = (teacher, day, period)
+        if key in self._teacher_busy:
+            return self._teacher_busy[key]
+        vars_at = self.by_teacher_day_period.get(key)
+        if not vars_at:
+            return None
+        busy = self._reify_has_any(vars_at)
+        self._teacher_busy[key] = busy
+        return busy
+
+    def class_busy(self, school_class, day, period):
+        key = (school_class, day, period)
+        if key in self._class_busy:
+            return self._class_busy[key]
+        vars_at = self.by_class_day_period.get(key)
+        if not vars_at:
+            return None
+        busy = self._reify_has_any(vars_at)
+        self._class_busy[key] = busy
+        return busy
 
 
 def _subjects_with_preferences(school):
@@ -23,15 +102,12 @@ def _subjects_with_preferences(school):
 def _build_assignment_vars(model, school, sessions, domains):
     """Create one BoolVar per valid (session, teacher, timeslot) triple."""
     assign = {}
+    var_id = 0
     for session in sessions:
         entries = []
         for teacher, timeslot in domains.get(session, []):
-            
-            label = (
-                f"s_{session.school_class.name}_{session.subject}_{session.number}"
-                f"_t{teacher.id}_{timeslot.day}p{timeslot.period}"
-            )
-            var = model.NewBoolVar(label)
+            var_id += 1
+            var = model.NewBoolVar(f"a{var_id}")
             teacher_penalty = (
                 TEACHER_PREFERENCE_WEIGHT
                 if teacher.preferred_slots and timeslot not in teacher.preferred_slots
@@ -50,164 +126,112 @@ def _add_session_constraints(model, assign):
     return True
 
 
-def _add_teacher_slot_constraints(model, school, sessions, assign):
+def _add_teacher_slot_constraints(model, ctx):
+    for (teacher, timeslot), vars_at in ctx.by_teacher_slot.items():
+        model.Add(sum(vars_at) <= 1)
+
+
+def _add_class_slot_constraints(model, ctx):
+    for (school_class, timeslot), vars_at in ctx.by_class_slot.items():
+        model.Add(sum(vars_at) <= 1)
+
+
+def _add_teacher_hour_constraints(model, school, ctx):
     for teacher in school.teachers:
-        for timeslot in school.timeslots:
-            vars_at = [
-                var
-                for session in sessions
-                for t, ts, var, _ in assign[session]
-                if t == teacher and ts == timeslot
-            ]
-            if vars_at:
-                model.Add(sum(vars_at) <= 1)
-
-
-def _add_subject_preference_soft(model, school, sessions, assign, objective_terms):
-    """
-    Soft version: strongly penalize placing a subject outside its preferred slots,
-    but don't make it impossible.
-    """
-    for session in sessions:
-        preferred = school.get_subject_preferred_slots(session.subject)
-        if not preferred:
-            continue
-        for t, ts, var, _ in assign[session]:
-            if ts not in preferred:
-                objective_terms.append(SUBJECT_PREFERENCE_WEIGHT * var)
-
-def _add_class_slot_constraints(model, school, sessions, assign):
-    for school_class in school.classes:
-        for timeslot in school.timeslots:
-            vars_at = [
-                var
-                for session in sessions
-                if session.school_class == school_class
-                for _, ts, var, _ in assign[session]
-                if ts == timeslot
-            ]
-            if vars_at:
-                model.Add(sum(vars_at) <= 1)
-
-
-def _add_teacher_hour_constraints(model, school, sessions, assign):
-    for teacher in school.teachers:
-        vars_t = [
-            var
-            for session in sessions
-            for t, _, var, _ in assign[session]
-            if t == teacher
-        ]
+        vars_t = ctx.by_teacher.get(teacher, [])
         if vars_t:
             model.Add(sum(vars_t) == teacher.required_hours)
 
 
-def _add_subject_day_cap_constraints(model, school, sessions, assign):
-    days = {ts.day for ts in school.timeslots}
+def _add_subject_day_cap_constraints(model, school, ctx):
     for school_class in school.classes:
         for subject in school_class.required_hours:
             max_per_day = school.get_subject_max_per_day(subject)
-            for day in days:
-                vars_day = [
-                    var
-                    for session in sessions
-                    if session.school_class == school_class and session.subject == subject
-                    for _, ts, var, _ in assign[session]
-                    if ts.day == day
-                ]
+            for day in ctx.days:
+                vars_day = []
+                for (cls, subj, d, _period), vars_at in ctx.by_class_subject_day_period.items():
+                    if cls == school_class and subj == subject and d == day:
+                        vars_day.extend(vars_at)
                 if vars_day:
                     model.Add(sum(vars_day) <= max_per_day)
 
 
-def _add_subject_min_per_day_constraints(model, school, sessions, assign):
+def _add_subject_min_per_day_constraints(model, ctx):
     """
     Hard rule: when min_per_day > 0, each (class, subject, day) has either
     0 sessions or at least min_per_day consecutive sessions.
     """
-    days = {ts.day for ts in school.timeslots}
-    all_periods = sorted({ts.period for ts in school.timeslots})
-    if not all_periods:
+    if not ctx.all_periods:
         return
 
-    min_period = all_periods[0]
-    max_period = all_periods[-1]
+    min_period = ctx.all_periods[0]
+    max_period = ctx.all_periods[-1]
 
-    for school_class in school.classes:
+    for school_class in ctx.school.classes:
         for subject in school_class.required_hours:
-            min_per_day = school.get_subject_min_per_day(subject)
+            min_per_day = ctx.school.get_subject_min_per_day(subject)
             if min_per_day <= 0:
                 continue
 
-            for day in days:
+            for day in ctx.days:
                 is_used = {}
-                for session in sessions:
-                    if session.school_class != school_class or session.subject != subject:
+                for period in ctx.all_periods:
+                    vars_at = ctx.by_class_subject_day_period.get(
+                        (school_class, subject, day, period)
+                    )
+                    if not vars_at:
                         continue
-                    for _, ts, var, _ in assign[session]:
-                        if ts.day != day:
-                            continue
-                        used = is_used.get(ts.period)
-                        if used is None:
-                            used = model.NewBoolVar(
-                                f"used_{school_class.name}_{subject}_{day}_p{ts.period}"
-                            )
-                            is_used[ts.period] = used
+                    used = is_used.get(period)
+                    if used is None:
+                        used = ctx.new_bool()
+                        is_used[period] = used
+                    for var in vars_at:
                         model.Add(var <= used)
 
                 if not is_used:
                     continue
 
                 for period, used in is_used.items():
-                    vars_at = [
-                        var
-                        for session in sessions
-                        if session.school_class == school_class
-                        and session.subject == subject
-                        for _, ts, var, _ in assign[session]
-                        if ts.day == day and ts.period == period
-                    ]
+                    vars_at = ctx.by_class_subject_day_period.get(
+                        (school_class, subject, day, period), []
+                    )
                     if vars_at:
                         model.Add(sum(vars_at) >= 1).OnlyEnforceIf(used)
                         model.Add(sum(vars_at) == 0).OnlyEnforceIf(used.Not())
 
                 count = sum(is_used.values())
-                has_any = model.NewBoolVar(
-                    f"has_{school_class.name}_{subject}_{day}"
-                )
+                has_any = ctx.new_bool()
                 model.Add(count >= 1).OnlyEnforceIf(has_any)
                 model.Add(count == 0).OnlyEnforceIf(has_any.Not())
                 model.Add(count >= min_per_day).OnlyEnforceIf(has_any)
 
                 min_occ = model.NewIntVar(
-                    min_period,
-                    max_period,
-                    f"minocc_{school_class.name}_{subject}_{day}",
+                    min_period, max_period, f"mn{ctx._var_id}"
                 )
+                ctx._var_id += 1
                 max_occ = model.NewIntVar(
-                    min_period,
-                    max_period,
-                    f"maxocc_{school_class.name}_{subject}_{day}",
+                    min_period, max_period, f"mx{ctx._var_id}"
                 )
+                ctx._var_id += 1
                 for period, used in is_used.items():
                     model.Add(min_occ <= period).OnlyEnforceIf(used)
                     model.Add(max_occ >= period).OnlyEnforceIf(used)
 
                 span = model.NewIntVar(
-                    0,
-                    max_period - min_period + 1,
-                    f"span_{school_class.name}_{subject}_{day}",
+                    0, max_period - min_period + 1, f"sp{ctx._var_id}"
                 )
+                ctx._var_id += 1
                 model.Add(span == max_occ - min_occ + 1).OnlyEnforceIf(has_any)
                 model.Add(count == span).OnlyEnforceIf(has_any)
 
 
-def _add_max_teachers_constraints(model, school, sessions, assign):
-    for school_class in school.classes:
+def _add_max_teachers_constraints(model, ctx):
+    for school_class in ctx.school.classes:
         for subject in school_class.required_hours:
             limit = school_class.max_teachers.get(subject, 1)
             allowed_ids = set(school_class.allowed_teachers.get(subject, []))
             allowed_teachers = [
-                t for t in school.teachers if t.id in allowed_ids
+                t for t in ctx.school.teachers if t.id in allowed_ids
             ]
             if not allowed_teachers:
                 continue
@@ -216,18 +240,16 @@ def _add_max_teachers_constraints(model, school, sessions, assign):
             for teacher in allowed_teachers:
                 session_vars = [
                     var
-                    for session in sessions
+                    for session in ctx.sessions
                     if session.school_class == school_class
                     and session.subject == subject
-                    for t, _, var, _ in assign[session]
+                    for t, _, var, _ in ctx.assign[session]
                     if t == teacher
                 ]
                 if not session_vars:
                     continue
 
-                used = model.NewBoolVar(
-                    f"use_{school_class.name}_{subject}_t{teacher.id}"
-                )
+                used = ctx.new_bool()
                 for var in session_vars:
                     model.Add(var <= used)
                 model.Add(sum(session_vars) >= used)
@@ -237,279 +259,226 @@ def _add_max_teachers_constraints(model, school, sessions, assign):
                 model.Add(sum(used_flags) <= limit)
 
 
-def _add_block_penalty_objective(model, school, sessions, assign, objective_terms):
+def _add_block_penalty_objective(model, ctx, objective_terms):
     """Penalize non-consecutive periods for the same (class, subject, day)."""
-    days = {ts.day for ts in school.timeslots}
-    for school_class in school.classes:
-        for subject in school_class.required_hours:
-            for day in days:
-                day_sessions = [
-                    session
-                    for session in sessions
-                    if session.school_class == school_class
-                    and session.subject == subject
-                ]
-                if len(day_sessions) < 2:
-                    continue
+    if not ctx.all_periods:
+        return
 
-                period_to_vars = {}
-                for session in day_sessions:
-                    for _, ts, var, _ in assign[session]:
-                        if ts.day == day:
-                            period_to_vars.setdefault(ts.period, []).append(var)
+    min_period = ctx.all_periods[0]
+    max_period = ctx.all_periods[-1]
 
-                periods = sorted(period_to_vars)
-                for i in range(len(periods) - 1):
-                    gap = periods[i + 1] - periods[i] - 1
-                    if gap <= 0:
-                        continue
-                    left = period_to_vars[periods[i]]
-                    right = period_to_vars[periods[i + 1]]
+    seen = set()
+    for (school_class, subject, day, _period) in ctx.by_class_subject_day_period:
+        key = (school_class, subject, day)
+        if key in seen:
+            continue
+        seen.add(key)
 
-                    has_left = model.NewBoolVar(
-                        f"hl_{school_class.name}_{subject}_{day}_{periods[i]}"
-                    )
-                    has_right = model.NewBoolVar(
-                        f"hr_{school_class.name}_{subject}_{day}_{periods[i+1]}"
-                    )
-                    both = model.NewBoolVar(
-                        f"blk_{school_class.name}_{subject}_{day}_{periods[i]}_{periods[i+1]}"
-                    )
+        is_used = {}
+        for period in ctx.all_periods:
+            vars_at = ctx.by_class_subject_day_period.get(
+                (school_class, subject, day, period)
+            )
+            if not vars_at:
+                continue
+            used = is_used.get(period)
+            if used is None:
+                used = ctx.new_bool()
+                is_used[period] = used
+            for var in vars_at:
+                model.Add(var <= used)
 
-                    model.Add(sum(left) >= 1).OnlyEnforceIf(has_left)
-                    model.Add(sum(left) == 0).OnlyEnforceIf(has_left.Not())
-                    model.Add(sum(right) >= 1).OnlyEnforceIf(has_right)
-                    model.Add(sum(right) == 0).OnlyEnforceIf(has_right.Not())
-                    model.AddBoolAnd([has_left, has_right]).OnlyEnforceIf(both)
-                    model.AddBoolOr([has_left.Not(), has_right.Not()]).OnlyEnforceIf(
-                        both.Not()
-                    )
-                    objective_terms.append(gap * BLOCK_PENALTY_WEIGHT * both)
+        if len(is_used) < 2:
+            continue
 
-def _add_class_continuity_penalty(model, school, sessions, assign, objective_terms):
+        count = sum(is_used.values())
+        has_any = ctx.new_bool()
+        model.Add(count >= 1).OnlyEnforceIf(has_any)
+        model.Add(count == 0).OnlyEnforceIf(has_any.Not())
+
+        min_occ = model.NewIntVar(min_period, max_period, f"bm{ctx._var_id}")
+        ctx._var_id += 1
+        max_occ = model.NewIntVar(min_period, max_period, f"bx{ctx._var_id}")
+        ctx._var_id += 1
+        for period, used in is_used.items():
+            model.Add(min_occ <= period).OnlyEnforceIf(used)
+            model.Add(max_occ >= period).OnlyEnforceIf(used)
+
+        span = model.NewIntVar(
+            0, max_period - min_period + 1, f"bs{ctx._var_id}"
+        )
+        ctx._var_id += 1
+        model.Add(span == max_occ - min_occ + 1).OnlyEnforceIf(has_any)
+        gaps = model.NewIntVar(0, max_period - min_period, f"bg{ctx._var_id}")
+        ctx._var_id += 1
+        model.Add(gaps == span - count).OnlyEnforceIf(has_any)
+        model.Add(gaps == 0).OnlyEnforceIf(has_any.Not())
+        objective_terms.append(BLOCK_PENALTY_WEIGHT * gaps)
+
+
+def _add_class_continuity_penalty(model, ctx, objective_terms):
     """
     Penalize a teacher teaching class A, then class B, then class A again
-    on the same day. We do this by penalizing each (teacher, day, period)
-    pair where the class differs from the previous period.
+    on the same day. Uses O(classes) vars per period pair instead of O(C²).
     """
-    days = {ts.day for ts in school.timeslots}
-
-    for teacher in school.teachers:
-        for day in days:
-            # Collect all periods this teacher could teach on this day
-            # period -> list of (school_class, var)
-            period_class_vars = {}
-            for session in sessions:
-                for t, ts, var, _ in assign[session]:
+    for teacher in ctx.school.teachers:
+        for day in ctx.days:
+            period_class_vars = defaultdict(list)
+            for session in ctx.sessions:
+                for t, ts, var, _ in ctx.assign[session]:
                     if t == teacher and ts.day == day:
-                        p = ts.period
-                        if p not in period_class_vars:
-                            period_class_vars[p] = []
-                        period_class_vars[p].append((session.school_class, var))
+                        period_class_vars[ts.period].append((session.school_class, var))
 
-            periods = sorted(period_class_vars.keys())
+            periods = sorted(period_class_vars)
             if len(periods) < 2:
                 continue
 
-            # For each consecutive pair of periods, penalize if different classes
             for i in range(len(periods) - 1):
                 p1, p2 = periods[i], periods[i + 1]
                 entries1 = period_class_vars[p1]
                 entries2 = period_class_vars[p2]
 
-                # For each pair of classes that are different
-                classes1 = {cls for cls, _ in entries1}
-                classes2 = {cls for cls, _ in entries2}
+                classes = {cls for cls, _ in entries1} | {cls for cls, _ in entries2}
 
-                for cls1 in classes1:
-                    for cls2 in classes2:
-                        if cls1 == cls2:
-                            continue
-                        # vars where teacher teaches cls1 at p1
-                        vars1 = [v for c, v in entries1 if c == cls1]
-                        # vars where teacher teaches cls2 at p2
-                        vars2 = [v for c, v in entries2 if c == cls2]
+                has_at = {}
+                for cls in classes:
+                    vars1 = [v for c, v in entries1 if c == cls]
+                    vars2 = [v for c, v in entries2 if c == cls]
+                    h1 = ctx._reify_has_any(vars1) if vars1 else None
+                    h2 = ctx._reify_has_any(vars2) if vars2 else None
+                    if h1 is not None:
+                        has_at[(cls, p1)] = h1
+                    if h2 is not None:
+                        has_at[(cls, p2)] = h2
 
-                        if not vars1 or not vars2:
-                            continue
+                busy1 = ctx._reify_has_any([v for _, v in entries1])
+                busy2 = ctx._reify_has_any([v for _, v in entries2])
 
-                        # both = 1 if teacher switches class between p1 and p2
-                        both = model.NewBoolVar(
-                            f"switch_{teacher.id}_{day}_{p1}_{p2}_{cls1.name}_{cls2.name}"
-                        )
-                        sum1 = model.NewBoolVar(f"has_{teacher.id}_{day}_{p1}_{cls1.name}")
-                        sum2 = model.NewBoolVar(f"has_{teacher.id}_{day}_{p2}_{cls2.name}")
+                same_class_flags = []
+                for cls in classes:
+                    h1 = has_at.get((cls, p1))
+                    h2 = has_at.get((cls, p2))
+                    if h1 is None or h2 is None:
+                        continue
+                    both = ctx.new_bool()
+                    model.AddBoolAnd([h1, h2]).OnlyEnforceIf(both)
+                    model.AddBoolOr([h1.Not(), h2.Not()]).OnlyEnforceIf(both.Not())
+                    same_class_flags.append(both)
 
-                        model.Add(sum(vars1) >= 1).OnlyEnforceIf(sum1)
-                        model.Add(sum(vars1) == 0).OnlyEnforceIf(sum1.Not())
-                        model.Add(sum(vars2) >= 1).OnlyEnforceIf(sum2)
-                        model.Add(sum(vars2) == 0).OnlyEnforceIf(sum2.Not())
-
-                        model.AddBoolAnd([sum1, sum2]).OnlyEnforceIf(both)
-                        model.AddBoolOr([sum1.Not(), sum2.Not()]).OnlyEnforceIf(both.Not())
-
-                        objective_terms.append(CLASS_SWITCH_WEIGHT * both)
-
-def _add_teacher_gap_penalty(model, school, sessions, assign, objective_terms):
-    days = {ts.day for ts in school.timeslots}
-    all_periods = sorted({ts.period for ts in school.timeslots})
-
-    for teacher in school.teachers:
-        for day in days:
-            # Build busy var for each period
-            period_busy_vars = {}
-            for period in all_periods:
-                busy_vars = [
-                    var
-                    for session in sessions
-                    for t, ts, var, _ in assign[session]
-                    if t == teacher and ts.day == day and ts.period == period
-                ]
-                if busy_vars:
-                    busy = model.NewBoolVar(f"busy_{teacher.id}_{day}_{period}")
-                    model.Add(sum(busy_vars) >= 1).OnlyEnforceIf(busy)
-                    model.Add(sum(busy_vars) == 0).OnlyEnforceIf(busy.Not())
-                    period_busy_vars[period] = busy
-
-            if len(period_busy_vars) < 2:
-                continue
-
-            periods = sorted(period_busy_vars.keys())
-
-            # ever_busy_before[i] = True if teacher is busy at ANY period before periods[i]
-            ever_busy_before = {}
-            for i, p in enumerate(periods):
-                if i == 0:
-                    ever_busy_before[p] = None  # no period before first
-                    continue
-                prev_p = periods[i - 1]
-                ebb = model.NewBoolVar(f"ebb_{teacher.id}_{day}_{p}")
-                if prev_p not in ever_busy_before or ever_busy_before[prev_p] is None:
-                    # only one period before: just use it directly
-                    model.Add(ebb == period_busy_vars[prev_p])
+                if not same_class_flags:
+                    switch = ctx.new_bool()
+                    model.AddBoolAnd([busy1, busy2]).OnlyEnforceIf(switch)
+                    model.AddBoolOr([busy1.Not(), busy2.Not()]).OnlyEnforceIf(
+                        switch.Not()
+                    )
                 else:
-                    # ebb = period_busy_vars[prev_p] OR ever_busy_before[prev_p]
-                    model.AddBoolOr([
-                        period_busy_vars[prev_p],
-                        ever_busy_before[prev_p]
-                    ]).OnlyEnforceIf(ebb)
-                    model.AddBoolAnd([
-                        period_busy_vars[prev_p].Not(),
-                        ever_busy_before[prev_p].Not()
-                    ]).OnlyEnforceIf(ebb.Not())
-                ever_busy_before[p] = ebb
+                    same_class = ctx.new_bool()
+                    model.AddBoolOr(same_class_flags).OnlyEnforceIf(same_class)
+                    model.AddBoolAnd([f.Not() for f in same_class_flags]).OnlyEnforceIf(
+                        same_class.Not()
+                    )
+                    switch = ctx.new_bool()
+                    model.AddBoolAnd([busy1, busy2, same_class.Not()]).OnlyEnforceIf(
+                        switch
+                    )
+                    model.AddBoolOr([busy1.Not(), busy2.Not(), same_class]).OnlyEnforceIf(
+                        switch.Not()
+                    )
 
-            # ever_busy_after[i] = True if teacher is busy at ANY period after periods[i]
-            ever_busy_after = {}
-            for i, p in enumerate(reversed(periods)):
-                if i == 0:
-                    ever_busy_after[p] = None  # no period after last
-                    continue
-                next_p = periods[len(periods) - i]
-                eba = model.NewBoolVar(f"eba_{teacher.id}_{day}_{p}")
-                if next_p not in ever_busy_after or ever_busy_after[next_p] is None:
-                    model.Add(eba == period_busy_vars[next_p])
-                else:
-                    model.AddBoolOr([
-                        period_busy_vars[next_p],
-                        ever_busy_after[next_p]
-                    ]).OnlyEnforceIf(eba)
-                    model.AddBoolAnd([
-                        period_busy_vars[next_p].Not(),
-                        ever_busy_after[next_p].Not()
-                    ]).OnlyEnforceIf(eba.Not())
-                ever_busy_after[p] = eba
-
-            # Now detect gaps: interior periods where not busy but sandwiched
-            for i, p_curr in enumerate(periods):
-                if i == 0 or i == len(periods) - 1:
-                    continue
-                if ever_busy_before.get(p_curr) is None or ever_busy_after.get(p_curr) is None:
-                    continue
-
-                is_gap = model.NewBoolVar(f"gap_{teacher.id}_{day}_{p_curr}")
-                model.AddBoolAnd([
-                    ever_busy_before[p_curr],
-                    period_busy_vars[p_curr].Not(),
-                    ever_busy_after[p_curr]
-                ]).OnlyEnforceIf(is_gap)
-                model.AddBoolOr([
-                    ever_busy_before[p_curr].Not(),
-                    period_busy_vars[p_curr],
-                    ever_busy_after[p_curr].Not()
-                ]).OnlyEnforceIf(is_gap.Not())
-
-                objective_terms.append(TEACHER_GAP_WEIGHT * is_gap)
+                objective_terms.append(CLASS_SWITCH_WEIGHT * switch)
 
 
-def _add_class_gap_penalty(model, school, sessions, assign, objective_terms):
-    """
-    Penalize gaps in a class's daily schedule.
-    """
-    days = {ts.day for ts in school.timeslots}
-    all_periods = sorted({ts.period for ts in school.timeslots})
+def _add_teacher_gap_penalty(model, ctx, objective_terms):
+    for teacher in ctx.school.teachers:
+        for day in ctx.days:
+            busy_by_period = {}
+            for period in ctx.all_periods:
+                busy = ctx.teacher_busy(teacher, day, period)
+                if busy is not None:
+                    busy_by_period[period] = busy
 
-    for school_class in school.classes:
-        for day in days:
-            period_busy_vars = {}
-            for period in all_periods:
-                busy_vars = [
-                    var
-                    for session in sessions
-                    if session.school_class == school_class
-                    for _, ts, var, _ in assign[session]
-                    if ts.day == day and ts.period == period
-                ]
-                if busy_vars:
-                    busy = model.NewBoolVar(f"cbusy_{school_class.name}_{day}_{period}")
-                    model.Add(sum(busy_vars) >= 1).OnlyEnforceIf(busy)
-                    model.Add(sum(busy_vars) == 0).OnlyEnforceIf(busy.Not())
-                    period_busy_vars[period] = busy
-
-            periods = sorted(period_busy_vars.keys())
+            periods = sorted(busy_by_period)
             if len(periods) < 3:
                 continue
 
             for i in range(1, len(periods) - 1):
-                p_prev = periods[i - 1]
                 p_curr = periods[i]
-                p_next = periods[i + 1]
+                before_vars = [busy_by_period[p] for p in periods if p < p_curr]
+                after_vars = [busy_by_period[p] for p in periods if p > p_curr]
+                if not before_vars or not after_vars:
+                    continue
 
+                busy_before = ctx._reify_has_any(before_vars)
+                busy_after = ctx._reify_has_any(after_vars)
+                is_gap = ctx.new_bool()
+                model.AddBoolAnd(
+                    [busy_before, busy_by_period[p_curr].Not(), busy_after]
+                ).OnlyEnforceIf(is_gap)
+                model.AddBoolOr(
+                    [
+                        busy_before.Not(),
+                        busy_by_period[p_curr],
+                        busy_after.Not(),
+                    ]
+                ).OnlyEnforceIf(is_gap.Not())
+                objective_terms.append(TEACHER_GAP_WEIGHT * is_gap)
+
+
+def _add_class_gap_penalty(model, ctx, objective_terms):
+    for school_class in ctx.school.classes:
+        for day in ctx.days:
+            busy_by_period = {}
+            for period in ctx.all_periods:
+                busy = ctx.class_busy(school_class, day, period)
+                if busy is not None:
+                    busy_by_period[period] = busy
+
+            periods = sorted(busy_by_period)
+            if len(periods) < 3:
+                continue
+
+            for i in range(1, len(periods) - 1):
+                p_prev, p_curr, p_next = periods[i - 1], periods[i], periods[i + 1]
                 gap_size = p_next - p_prev - 1
                 if gap_size <= 0:
                     continue
 
-                is_gap = model.NewBoolVar(f"cgap_{school_class.name}_{day}_{p_curr}")
-                model.AddBoolAnd([
-                    period_busy_vars[p_prev],
-                    period_busy_vars[p_curr].Not(),
-                    period_busy_vars[p_next]
-                ]).OnlyEnforceIf(is_gap)
-                model.AddBoolOr([
-                    period_busy_vars[p_prev].Not(),
-                    period_busy_vars[p_curr],
-                    period_busy_vars[p_next].Not()
-                ]).OnlyEnforceIf(is_gap.Not())
-
+                is_gap = ctx.new_bool()
+                model.AddBoolAnd(
+                    [
+                        busy_by_period[p_prev],
+                        busy_by_period[p_curr].Not(),
+                        busy_by_period[p_next],
+                    ]
+                ).OnlyEnforceIf(is_gap)
+                model.AddBoolOr(
+                    [
+                        busy_by_period[p_prev].Not(),
+                        busy_by_period[p_curr],
+                        busy_by_period[p_next].Not(),
+                    ]
+                ).OnlyEnforceIf(is_gap.Not())
                 objective_terms.append(CLASS_GAP_WEIGHT * is_gap)
 
 
-# ─── Hard constraints from generation preferences ─────────────────────────────
+def _add_subject_preference_soft(model, school, ctx, objective_terms):
+    for session in ctx.sessions:
+        preferred = school.get_subject_preferred_slots(session.subject)
+        if not preferred:
+            continue
+        for _, ts, var, _ in ctx.assign[session]:
+            if ts not in preferred:
+                objective_terms.append(SUBJECT_PREFERENCE_WEIGHT * var)
 
-def _add_max_entry_period_constraint(model, school, sessions, assign, max_entry_period):
-    """
-    Hard constraint: on any day a class has sessions, at least one must be
-    at or before max_entry_period (students cannot start too late).
-    """
-    days = {ts.day for ts in school.timeslots}
 
-    for school_class in school.classes:
-        for day in days:
+def _add_max_entry_period_constraint(model, ctx, max_entry_period):
+    for school_class in ctx.school.classes:
+        for day in ctx.days:
             all_day_vars = [
                 var
-                for session in sessions
+                for session in ctx.sessions
                 if session.school_class == school_class
-                for _, ts, var, _ in assign[session]
+                for _, ts, var, _ in ctx.assign[session]
                 if ts.day == day
             ]
             if not all_day_vars:
@@ -517,43 +486,33 @@ def _add_max_entry_period_constraint(model, school, sessions, assign, max_entry_
 
             early_vars = [
                 var
-                for session in sessions
+                for session in ctx.sessions
                 if session.school_class == school_class
-                for _, ts, var, _ in assign[session]
+                for _, ts, var, _ in ctx.assign[session]
                 if ts.day == day and ts.period <= max_entry_period
             ]
 
-            has_session_today = model.NewBoolVar(
-                f"has_session_{school_class.name}_{day}_entry"
-            )
+            has_session_today = ctx.new_bool()
             model.AddBoolOr(all_day_vars).OnlyEnforceIf(has_session_today)
             model.AddBoolAnd([v.Not() for v in all_day_vars]).OnlyEnforceIf(
                 has_session_today.Not()
             )
 
             if early_vars:
-                # If class has any session today, must have one in early periods
                 model.AddBoolOr(early_vars).OnlyEnforceIf(has_session_today)
             else:
-                # No early slots exist at all → forbid any session on this day
                 model.Add(has_session_today == 0)
                 model.AddBoolAnd([v.Not() for v in all_day_vars])
 
 
-def _add_min_exit_period_constraint(model, school, sessions, assign, min_exit_period):
-    """
-    Hard constraint: on any day a class has sessions, at least one must be
-    at or after min_exit_period (students cannot leave too early).
-    """
-    days = {ts.day for ts in school.timeslots}
-
-    for school_class in school.classes:
-        for day in days:
+def _add_min_exit_period_constraint(model, ctx, min_exit_period):
+    for school_class in ctx.school.classes:
+        for day in ctx.days:
             all_day_vars = [
                 var
-                for session in sessions
+                for session in ctx.sessions
                 if session.school_class == school_class
-                for _, ts, var, _ in assign[session]
+                for _, ts, var, _ in ctx.assign[session]
                 if ts.day == day
             ]
             if not all_day_vars:
@@ -561,15 +520,13 @@ def _add_min_exit_period_constraint(model, school, sessions, assign, min_exit_pe
 
             late_vars = [
                 var
-                for session in sessions
+                for session in ctx.sessions
                 if session.school_class == school_class
-                for _, ts, var, _ in assign[session]
+                for _, ts, var, _ in ctx.assign[session]
                 if ts.day == day and ts.period >= min_exit_period
             ]
 
-            has_session_today = model.NewBoolVar(
-                f"has_session_{school_class.name}_{day}_exit"
-            )
+            has_session_today = ctx.new_bool()
             model.AddBoolOr(all_day_vars).OnlyEnforceIf(has_session_today)
             model.AddBoolAnd([v.Not() for v in all_day_vars]).OnlyEnforceIf(
                 has_session_today.Not()
@@ -582,107 +539,75 @@ def _add_min_exit_period_constraint(model, school, sessions, assign, min_exit_pe
                 model.AddBoolAnd([v.Not() for v in all_day_vars])
 
 
-def _add_no_student_gap_constraint(model, school, sessions, assign):
-    """
-    Hard constraint: for each class on each day, if a class is busy before
-    period P and after period P, it must also be busy at period P (no gaps).
-    """
-    days = {ts.day for ts in school.timeslots}
-    all_periods = sorted({ts.period for ts in school.timeslots})
-
-    for school_class in school.classes:
-        for day in days:
-            # Build busy var for each period
-            period_busy_vars = {}
-            for period in all_periods:
-                busy_vars = [
-                    var
-                    for session in sessions
-                    if session.school_class == school_class
-                    for _, ts, var, _ in assign[session]
-                    if ts.day == day and ts.period == period
-                ]
-                if busy_vars:
-                    busy = model.NewBoolVar(
-                        f"cng_busy_{school_class.name}_{day}_{period}"
-                    )
-                    model.Add(sum(busy_vars) >= 1).OnlyEnforceIf(busy)
-                    model.Add(sum(busy_vars) == 0).OnlyEnforceIf(busy.Not())
-                    period_busy_vars[period] = busy
-
-            if len(period_busy_vars) < 3:
-                continue
-
-            for p_idx, p_curr in enumerate(all_periods):
-                if p_curr not in period_busy_vars:
+def _add_no_student_gap_constraint(model, ctx):
+    for school_class in ctx.school.classes:
+        for day in ctx.days:
+            for p_idx, p_curr in enumerate(ctx.all_periods):
+                if p_idx == 0 or p_idx == len(ctx.all_periods) - 1:
                     continue
-                if p_idx == 0 or p_idx == len(all_periods) - 1:
+
+                busy_curr = ctx.class_busy(school_class, day, p_curr)
+                if busy_curr is None:
                     continue
 
                 vars_before = [
-                    period_busy_vars[p]
-                    for p in all_periods[:p_idx]
-                    if p in period_busy_vars
+                    ctx.class_busy(school_class, day, p)
+                    for p in ctx.all_periods[:p_idx]
+                    if ctx.class_busy(school_class, day, p) is not None
                 ]
                 vars_after = [
-                    period_busy_vars[p]
-                    for p in all_periods[p_idx + 1:]
-                    if p in period_busy_vars
+                    ctx.class_busy(school_class, day, p)
+                    for p in ctx.all_periods[p_idx + 1 :]
+                    if ctx.class_busy(school_class, day, p) is not None
                 ]
 
                 if not vars_before or not vars_after:
                     continue
 
-                busy_before = model.NewBoolVar(
-                    f"cng_before_{school_class.name}_{day}_{p_curr}"
-                )
-                busy_after = model.NewBoolVar(
-                    f"cng_after_{school_class.name}_{day}_{p_curr}"
-                )
-
-                model.AddBoolOr(vars_before).OnlyEnforceIf(busy_before)
-                model.AddBoolAnd([v.Not() for v in vars_before]).OnlyEnforceIf(
-                    busy_before.Not()
-                )
-                model.AddBoolOr(vars_after).OnlyEnforceIf(busy_after)
-                model.AddBoolAnd([v.Not() for v in vars_after]).OnlyEnforceIf(
-                    busy_after.Not()
+                busy_before = ctx._reify_has_any(vars_before)
+                busy_after = ctx._reify_has_any(vars_after)
+                model.AddBoolOr(
+                    [busy_before.Not(), busy_after.Not(), busy_curr]
                 )
 
-                # busy_before AND busy_after => must be busy at p_curr
-                # Equivalent: NOT busy_before OR NOT busy_after OR busy_curr
-                model.AddBoolOr([
-                    busy_before.Not(),
-                    busy_after.Not(),
-                    period_busy_vars[p_curr],
-                ])
 
+def _add_symmetry_breaking(model, school, ctx):
+    """
+    Order interchangeable sessions of the same (class, subject) by timeslot index.
+    Does not change solution quality — only removes redundant search permutations.
+    """
+    if not school.timeslots:
+        return
 
-def _set_quality_objective(model, assign, school, sessions):
-    objective_terms = []
-    for entries in assign.values():
-        for _, _, var, teacher_penalty in entries:
-            if teacher_penalty:
-                objective_terms.append(teacher_penalty * var)
-    _add_subject_preference_soft(model, school, sessions, assign, objective_terms)
-    _add_block_penalty_objective(model, school, sessions, assign, objective_terms)
-    # 4. Continuité des classes pour un prof (nouveau)
-    _add_class_continuity_penalty(model, school, sessions, assign, objective_terms)
+    slot_index = {ts: i for i, ts in enumerate(school.timeslots)}
+    max_idx = len(school.timeslots) - 1
+    groups = defaultdict(list)
+    for session in ctx.sessions:
+        groups[(session.school_class, session.subject)].append(session)
 
-    # 5. Trous dans le planning des profs (nouveau)
-    _add_teacher_gap_penalty(model, school, sessions, assign, objective_terms)
-
-    # 6. Trous dans le planning des classes (nouveau)
-    _add_class_gap_penalty(model, school, sessions, assign, objective_terms)
-    
-    if objective_terms:
-        model.Minimize(sum(objective_terms))
-
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda s: s.number)
+        slot_vars = []
+        for session in group:
+            sv = model.NewIntVar(0, max_idx, f"si{ctx._var_id}")
+            ctx._var_id += 1
+            for _, ts, var, _ in ctx.assign[session]:
+                model.Add(sv == slot_index[ts]).OnlyEnforceIf(var)
+            slot_vars.append(sv)
+        for i in range(len(slot_vars) - 1):
+            model.Add(slot_vars[i] <= slot_vars[i + 1])
 
 
 def _configure_solver(solver, time_limit_seconds):
     solver.parameters.max_time_in_seconds = time_limit_seconds
-    solver.parameters.num_search_workers = 8
+    workers = os.cpu_count() or 8
+    solver.parameters.num_search_workers = max(1, workers)
+    solver.parameters.cp_model_presolve = True
+    solver.parameters.linearization_level = 2
+    solver.parameters.use_lns = True
+    solver.parameters.diversify_lns_params = True
 
 
 def _extract_schedule(school, sessions, assign, solver):
@@ -757,39 +682,66 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
         )
 
     domains = school.generate_domains()
-    
 
     model = cp_model.CpModel()
     assign = _build_assignment_vars(model, school, sessions, domains)
+    ctx = _ModelContext(model, school, sessions, assign)
 
     if not _add_session_constraints(model, assign):
         return None, "Une leçon n'a pas d'options de placement valides."
 
-    _add_teacher_slot_constraints(model, school, sessions, assign)
-    _add_class_slot_constraints(model, school, sessions, assign)
-    _add_teacher_hour_constraints(model, school, sessions, assign)
-    _add_subject_day_cap_constraints(model, school, sessions, assign)
-    _add_subject_min_per_day_constraints(model, school, sessions, assign)
-    _add_max_teachers_constraints(model, school, sessions, assign)
+    _add_teacher_slot_constraints(model, ctx)
+    _add_class_slot_constraints(model, ctx)
+    _add_teacher_hour_constraints(model, school, ctx)
+    _add_subject_day_cap_constraints(model, school, ctx)
+    _add_subject_min_per_day_constraints(model, ctx)
+    _add_max_teachers_constraints(model, ctx)
 
-    # ── Optional hard constraints from generation preferences ──────────────────
     max_entry = generation_prefs.get("max_entry_period")
     min_exit = generation_prefs.get("min_exit_period")
     allow_gaps = generation_prefs.get("allow_student_gaps", True)
 
     if max_entry is not None:
-        _add_max_entry_period_constraint(model, school, sessions, assign, int(max_entry))
+        _add_max_entry_period_constraint(model, ctx, int(max_entry))
     if min_exit is not None:
-        _add_min_exit_period_constraint(model, school, sessions, assign, int(min_exit))
+        _add_min_exit_period_constraint(model, ctx, int(min_exit))
     if not allow_gaps:
-        _add_no_student_gap_constraint(model, school, sessions, assign)
+        _add_no_student_gap_constraint(model, ctx)
 
-    _set_quality_objective(model, assign, school, sessions)
+    _add_symmetry_breaking(model, school, ctx)
 
+    objective_terms = []
+    for entries in ctx.assign.values():
+        for _, _, var, teacher_penalty in entries:
+            if teacher_penalty:
+                objective_terms.append(teacher_penalty * var)
+    _add_subject_preference_soft(model, school, ctx, objective_terms)
+    _add_block_penalty_objective(model, ctx, objective_terms)
+    _add_class_continuity_penalty(model, ctx, objective_terms)
+    _add_teacher_gap_penalty(model, ctx, objective_terms)
+    _add_class_gap_penalty(model, ctx, objective_terms)
 
     solver = cp_model.CpSolver()
     _configure_solver(solver, time_limit_seconds)
+
+    # Phase 1: find any feasible timetable quickly (no objective).
+    phase1_limit = min(30.0, time_limit_seconds * 0.15)
+    solver.parameters.max_time_in_seconds = phase1_limit
     status = solver.Solve(model)
+
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        for entries in assign.values():
+            for _, _, var, _ in entries:
+                model.AddHint(var, solver.Value(var))
+        if objective_terms:
+            model.Minimize(sum(objective_terms))
+            remaining = max(5.0, time_limit_seconds - phase1_limit)
+            solver.parameters.max_time_in_seconds = remaining
+            status = solver.Solve(model)
+    elif status == cp_model.UNKNOWN and objective_terms:
+        model.Minimize(sum(objective_terms))
+        solver.parameters.max_time_in_seconds = time_limit_seconds
+        status = solver.Solve(model)
 
     if status == cp_model.INFEASIBLE:
         pref_subjects = _subjects_with_preferences(school)
@@ -828,18 +780,12 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
     if len(schedule.assignments) != len(sessions):
         return None, "Erreur interne : emploi du temps incomplet extrait de CP-SAT."
 
-  
-
-   
-
-    
-
     pref_subjects = _subjects_with_preferences(school)
     status_label = "optimal" if status == cp_model.OPTIMAL else "réalisable"
     violations_after = _count_subject_slot_violations(school, school.schedule)
     total = sum(violations_after.values()) if violations_after else 0
     return (
-    school.schedule,
-    f"Emploi du temps {status_label} trouvé. "
-    f"Violations des préférences : {total} séances placées en dehors des créneaux préférés.",
+        school.schedule,
+        f"Emploi du temps {status_label} trouvé. "
+        f"Violations des préférences : {total} séances placées en dehors des créneaux préférés.",
     )
