@@ -848,6 +848,10 @@ a {
   margin-bottom: 0;
 }
 
+.inline-form .form-group.form-group-num {
+  flex: 0 0 210px;
+}
+
 .hours-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -1050,6 +1054,31 @@ a {
 
   .mobile-scroll-hint {
     display: flex !important;
+  }
+
+  /* Subject list items stack on mobile to avoid button overflow */
+  .list-item {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 0.75rem !important;
+    padding: 1rem !important;
+  }
+
+  .list-item-actions {
+    justify-content: flex-start !important;
+    margin-top: 0.25rem !important;
+    width: 100% !important;
+  }
+
+  /* Inline form columns stack vertically on mobile */
+  .inline-form {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 1rem !important;
+  }
+
+  .inline-form .form-group.form-group-num {
+    flex: 1 1 auto !important;
   }
 }
 

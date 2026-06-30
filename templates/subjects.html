@@ -17,26 +17,24 @@
       <input type="text" id="subject-name" name="name" class="form-input"
              placeholder="ex: Arabe, Français, Anglais…" required>
     </div>
-    <div class="form-group">
+    <div class="form-group form-group-num">
       <label class="form-label" for="subject-max-per-day">Créneaux max par jour</label>
       <input type="number" id="subject-max-per-day" name="max_per_day" class="form-input"
              min="1" max="7" value="7" required>
     </div>
-    <div class="form-group">
+    <div class="form-group form-group-num">
       <label class="form-label" for="subject-min-per-day">Minimum par jour (0 = désactivé)</label>
       <input type="number" id="subject-min-per-day" name="min_per_day" class="form-input"
              min="0" max="7" value="0" required>
-      <p class="form-hint">
-        Si la matière est enseignée un jour donné, elle doit avoir au moins ce nombre de créneaux
-        <strong>consécutifs</strong>, ou aucun ce jour-là.
-        Exemple : 2 pour le français évite les séances isolées.
-      </p>
     </div>
     <div class="form-actions">
       <button type="submit" class="btn btn-primary" id="subjectSubmit">Ajouter la Matière</button>
       <button type="button" class="btn btn-secondary" id="subjectCancelEdit" style="display:none;">Annuler</button>
     </div>
   </form>
+  <p class="form-hint" style="margin-top: 1rem; max-width: 650px;">
+    💡 <strong>Minimum par jour :</strong> Si la matière est enseignée un jour donné, elle doit avoir au moins ce nombre de créneaux <strong>consécutifs</strong>, ou aucun ce jour-là (ex: 2 pour le français évite les séances isolées).
+  </p>
 </div>
 
 <div class="card">
