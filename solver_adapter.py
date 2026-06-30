@@ -5,6 +5,7 @@ import data_store
 import os
 import threading
 import uuid
+from zoneinfo import ZoneInfo
 from datetime import datetime
 try:
     from cp_sat_solver import solve_with_cp_sat, validate_strict_subject_preferences
@@ -26,7 +27,7 @@ def _run_solver_in_background(job_id, user_id, generation_prefs=None):
         success, result = run_solver(user_id, generation_prefs=generation_prefs)
         if success:
             from datetime import datetime
-            time_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+            time_str = datetime.now(ZoneInfo("Africa/Algiers")).strftime("%d/%m/%Y %H:%M")
             sched_name = f"Emploi du temps - {time_str}"
             schedule_id = data_store.save_schedule(user_id, sched_name, result)
             data_store.set_last_schedule(result, user_id)
