@@ -13,7 +13,9 @@ import data_store
 import solver_adapter
 
 app = Flask(__name__)
-app.secret_key = "timetable-scheduler-dev-key"
+app.secret_key = os.environ.get("SECRET_KEY")
+if not app.secret_key:
+    raise RuntimeError("SECRET_KEY environment variable is required")
 
 
 def admin_required(f):
@@ -491,6 +493,14 @@ def generate_run():
 
 
 
+@app.route("/generate/cancel/<job_id>", methods=["POST"])
+def generate_cancel(job_id):
+    user_id = session.get("user_id")
+    if solver_adapter.cancel_job(job_id, user_id=user_id):
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Impossible d'annuler ce travail."}), 400
+
+
 @app.route("/generate/status/<job_id>")
 def generate_status(job_id):
     """Polling endpoint — frontend calls this every 3s to check if solver is done."""
@@ -499,6 +509,10 @@ def generate_status(job_id):
         return jsonify({"ok": True, "status": "done", "redirect": url_for("results", id=status["schedule_id"])})
     elif status["status"] == "error":
         return jsonify({"ok": False, "status": "error", "errors": status.get("errors", [])})
+    elif status["status"] == "canceling":
+        return jsonify({"ok": True, "status": "canceling"})
+    elif status["status"] == "canceled":
+        return jsonify({"ok": False, "status": "canceled", "errors": ["La génération a été annulée."]})
     elif status["status"] == "running":
         return jsonify({"ok": True, "status": "running"})
     else:

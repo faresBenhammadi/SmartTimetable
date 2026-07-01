@@ -18,30 +18,55 @@ except ImportError:
 import threading
 import uuid
 
-_jobs = {}  # job_id -> {status, result, errors}
+_jobs = {}  # job_id -> {status, user_id, cancel_token, schedule_id, errors}
+_jobs_lock = threading.Lock()
 
 
 def _run_solver_in_background(job_id, user_id, generation_prefs=None):
     """Worker function that runs the solver in a background thread."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        cancel_token = job.get("cancel_token") if job else None
+
     try:
-        success, result = run_solver(user_id, generation_prefs=generation_prefs)
-        if success:
-            from datetime import datetime
-            time_str = datetime.now(ZoneInfo("Africa/Algiers")).strftime("%d/%m/%Y %H:%M")
-            sched_name = f"Emploi du temps - {time_str}"
-            schedule_id = data_store.save_schedule(user_id, sched_name, result)
-            data_store.set_last_schedule(result, user_id)
-            _jobs[job_id] = {"status": "done", "schedule_id": schedule_id}
-        else:
-            _jobs[job_id] = {"status": "error", "errors": result}
+        success, result = run_solver(user_id, generation_prefs=generation_prefs, cancel_token=cancel_token)
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if job and job["status"] == "canceling":
+                _jobs[job_id] = {"status": "canceled", "user_id": user_id}
+                return
+
+            if success:
+                from datetime import datetime
+                time_str = datetime.now(ZoneInfo("Africa/Algiers")).strftime("%d/%m/%Y %H:%M")
+                sched_name = f"Emploi du temps - {time_str}"
+                schedule_id = data_store.save_schedule(user_id, sched_name, result)
+                data_store.set_last_schedule(result, user_id)
+                _jobs[job_id] = {
+                    "status": "done",
+                    "user_id": user_id,
+                    "schedule_id": schedule_id,
+                }
+            else:
+                _jobs[job_id] = {"status": "error", "user_id": user_id, "errors": result}
     except Exception as e:
-        _jobs[job_id] = {"status": "error", "errors": [str(e)]}
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if job and job["status"] == "canceling":
+                _jobs[job_id] = {"status": "canceled", "user_id": user_id}
+            else:
+                _jobs[job_id] = {"status": "error", "user_id": user_id, "errors": [str(e)]}
 
 
 def start_solver_job(user_id, generation_prefs=None):
     """Starts a background solver job and returns the job_id immediately."""
     job_id = str(uuid.uuid4())
-    _jobs[job_id] = {"status": "running"}
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "status": "running",
+            "user_id": user_id,
+            "cancel_token": {"event": threading.Event(), "solver": None},
+        }
     t = threading.Thread(target=_run_solver_in_background, args=(job_id, user_id, generation_prefs), daemon=True)
     t.start()
     return job_id
@@ -49,7 +74,29 @@ def start_solver_job(user_id, generation_prefs=None):
 
 def get_job_status(job_id):
     """Returns the current status of a solver job."""
-    return _jobs.get(job_id, {"status": "not_found"})
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        return dict(job) if job else {"status": "not_found"}
+
+
+def cancel_job(job_id, user_id=None):
+    """Request cancellation for a running solver job."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if not job or job.get("status") not in ("running", "canceling"):
+            return False
+        if user_id is not None and job.get("user_id") != user_id:
+            return False
+        job["status"] = "canceling"
+        cancel_token = job.get("cancel_token")
+
+    if cancel_token:
+        cancel_token["event"].set()
+        solver = cancel_token.get("solver")
+        if solver is not None:
+            solver.StopSearch()
+
+    return True
 
 
 
@@ -299,7 +346,7 @@ def _build_solver_failure_details(school, domains):
     return details
 
 
-def run_solver(user_id, time_limit_seconds=None, generation_prefs=None):
+def run_solver(user_id, time_limit_seconds=None, generation_prefs=None, cancel_token=None):
     import os
     if time_limit_seconds is None:
         time_limit_seconds = int(os.environ.get("SOLVER_TIME_LIMIT", 300))
@@ -309,9 +356,17 @@ def run_solver(user_id, time_limit_seconds=None, generation_prefs=None):
         return False, errors
 
     school = build_school_from_store(user_id)
-    schedule, message = solve_with_cp_sat(school, time_limit_seconds, generation_prefs=generation_prefs or {})
+    schedule, message = solve_with_cp_sat(
+        school,
+        time_limit_seconds,
+        generation_prefs=generation_prefs or {},
+        cancel_token=cancel_token,
+    )
 
     if schedule is None:
+        if cancel_token and cancel_token.get("event") and cancel_token["event"].is_set():
+            return False, ["La génération a été annulée."]
+
         school.generate_sessions()
         domains = school.generate_domains()
         details = _build_solver_failure_details(school, domains)

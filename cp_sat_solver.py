@@ -682,7 +682,7 @@ def validate_strict_subject_preferences(school):
     return _empty_strict_domain_errors(school, domains)
 
 
-def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
+def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None, cancel_token=None):
     """
     Find a timetable using CP-SAT.
 
@@ -693,6 +693,10 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
       - max_entry_period (int): latest first period allowed per class per day
       - min_exit_period  (int): earliest last period allowed per class per day
       - allow_student_gaps (bool): if False, gaps in class schedules are forbidden
+
+    cancel_token is an optional dict with keys:
+      - event: threading.Event() used to signal cancellation
+      - solver: CpSolver instance once solve starts
 
     Returns (schedule, status_message) where schedule is None on failure.
     """
@@ -752,7 +756,12 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
 
     print("Model build time:", time.perf_counter() - t0, "seconds")
     solver = cp_model.CpSolver()
+    if cancel_token is not None:
+        cancel_token["solver"] = solver
     _configure_solver(solver, time_limit_seconds)
+
+    if cancel_token and cancel_token.get("event") and cancel_token["event"].is_set():
+        return None, "La génération a été annulée."
 
     # Phase 1: find any feasible timetable quickly (no objective).
     phase1_limit = min(30.0, time_limit_seconds * 0.15)
@@ -772,6 +781,8 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
             for _, _, var, _ in entries:
                 model.AddHint(var, solver.Value(var))
         if objective_terms:
+            if cancel_token and cancel_token.get("event") and cancel_token["event"].is_set():
+                return None, "La génération a été annulée."
             model.Minimize(sum(objective_terms))
             remaining = max(5.0, time_limit_seconds - phase1_limit)
             solver.parameters.max_time_in_seconds = remaining
@@ -780,12 +791,16 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None):
             print("Total time:", time.perf_counter() - t0, "seconds")
             print("Status:", solver.StatusName(status))
             print("Wall time:", solver.WallTime())
+            if cancel_token and cancel_token.get("event") and cancel_token["event"].is_set():
+                return None, "La génération a été annulée."
             if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 print("Objective:", solver.ObjectiveValue())
                 print("Best bound:", solver.BestObjectiveBound())
             print("Conflicts:", solver.NumConflicts())
             print("Branches:", solver.NumBranches())
     elif status == cp_model.UNKNOWN and objective_terms:
+        if cancel_token and cancel_token.get("event") and cancel_token["event"].is_set():
+            return None, "La génération a été annulée."
         model.Minimize(sum(objective_terms))
         solver.parameters.max_time_in_seconds = time_limit_seconds
         status = solver.Solve(model)

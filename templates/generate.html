@@ -203,8 +203,12 @@ const generateBtn   = document.getElementById('generateBtn');
 const cancelBtn  = document.getElementById('cancelModalBtn');
 const confirmBtn = document.getElementById('confirmGenerateBtn');
 const overlay    = document.getElementById('loadingOverlay');
+const cancelGenerateBtn = document.getElementById('cancelGenerateBtn');
 const errorBox   = document.getElementById('errorBox');
 const errorList  = document.getElementById('errorList');
+let currentJobId = null;
+let originalSubtext = null;
+const POLL_INTERVAL_MS = 1000;
 
 // Open modal
 generateBtn?.addEventListener('click', () => {
@@ -217,6 +221,40 @@ cancelBtn?.addEventListener('click', () => {
 });
 backdrop.addEventListener('click', (e) => {
   if (e.target === backdrop) backdrop.classList.remove('open');
+});
+
+// Cancel generation while running
+cancelGenerateBtn?.addEventListener('click', async () => {
+  if (!currentJobId) {
+    return;
+  }
+  cancelGenerateBtn.disabled = true;
+  cancelGenerateBtn.textContent = 'Annulation demandée';
+  const subtext = overlay.querySelector('.loading-subtext');
+  if (subtext) {
+    subtext.textContent = 'Annulation en cours — recherche immédiate de l’état.';
+  }
+
+  try {
+    await fetch(`/generate/cancel/${currentJobId}`, { method: 'POST' });
+    const statusRes = await fetch(`/generate/status/${currentJobId}`);
+    const statusData = await statusRes.json();
+    if (statusData.status === 'canceled' || statusData.status === 'error') {
+      errorList.innerHTML = (statusData.errors || ['Annulation confirmée.']).map(e => `<li>${e}</li>`).join('');
+      errorBox.style.display = 'block';
+      generateBtn.disabled = false;
+      overlay.classList.remove('open');
+      cancelGenerateBtn.style.display = 'none';
+      if (originalSubtext !== null) {
+        overlay.querySelector('.loading-subtext').textContent = originalSubtext;
+      }
+      currentJobId = null;
+      return;
+    }
+    cancelGenerateBtn.textContent = 'Annulation en cours';
+  } catch (_) {
+    // ignore network issues; we still poll until the job ends or is canceled
+  }
 });
 
 // Confirm & launch
@@ -248,36 +286,49 @@ confirmBtn?.addEventListener('click', async () => {
       errorBox.style.display = 'block';
       generateBtn.disabled = false;
       overlay.classList.remove('open');
+      cancelGenerateBtn.style.display = 'none';
       return;
     }
 
-    // Step 2: Poll every 3 seconds for the job result
-    const jobId = startData.job_id;
+    currentJobId = startData.job_id;
+    cancelGenerateBtn.style.display = 'inline-flex';
+    cancelGenerateBtn.disabled = false;
+    cancelGenerateBtn.textContent = 'Annuler';
+    originalSubtext = overlay.querySelector('.loading-subtext')?.textContent || null;
+
     const pollInterval = setInterval(async () => {
       try {
-        const pollRes  = await fetch(`/generate/status/${jobId}`);
+        const pollRes  = await fetch(`/generate/status/${currentJobId}`);
         const pollData = await pollRes.json();
 
         if (pollData.status === 'done') {
           clearInterval(pollInterval);
+          cancelGenerateBtn.style.display = 'none';
           window.location.href = pollData.redirect;
 
-        } else if (pollData.status === 'error') {
+        } else if (pollData.status === 'error' || pollData.status === 'canceled') {
           clearInterval(pollInterval);
           errorList.innerHTML = (pollData.errors || ['Une erreur est survenue.']).map(e => `<li>${e}</li>`).join('');
           errorBox.style.display = 'block';
           generateBtn.disabled = false;
           overlay.classList.remove('open');
+          cancelGenerateBtn.style.display = 'none';
+          if (originalSubtext !== null) {
+            overlay.querySelector('.loading-subtext').textContent = originalSubtext;
+          }
+          currentJobId = null;
+        } else {
+          // keep polling if status === 'running' or 'canceling'
         }
-        // status === 'running' → keep polling silently
       } catch (_) { /* network blip, retry next tick */ }
-    }, 3000);
+    }, POLL_INTERVAL_MS);
 
   } catch (err) {
     errorList.innerHTML = '<li>Erreur réseau au démarrage. Veuillez réessayer.</li>';
     errorBox.style.display = 'block';
     generateBtn.disabled = false;
     overlay.classList.remove('open');
+    cancelGenerateBtn.style.display = 'none';
   }
 });
 </script>
