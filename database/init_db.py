@@ -18,7 +18,7 @@ session = SessionLocal()
 try:
     admin = session.query(User).filter_by(username="admin").first()
     if not admin:
-        admin_pass = os.environ.get("SITE_PASSWORD", "lemanya2026lechani")
+        admin_pass = os.environ.get("SITE_PASSWORD")
         admin = User(
             username="admin",
             password=generate_password_hash(admin_pass),
@@ -36,4 +36,4 @@ except Exception as e:
 finally:
     session.close()
 
-print("Database initialized successfully!")
+print("Database initialized successfully!")
