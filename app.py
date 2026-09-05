@@ -356,6 +356,7 @@ def save_class():
         "name": (payload.get("name") or "").strip(),
         "required_hours": payload.get("required_hours", {}),
         "max_teachers": payload.get("max_teachers", {}),
+        "tp_pairs": payload.get("tp_pairs", []),
     }
 
     if not class_data["name"]:

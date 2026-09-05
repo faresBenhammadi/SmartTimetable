@@ -20,12 +20,17 @@
     <div class="list-item-info">
       <h4>{{ cls.name }}</h4>
       <p>
-        {% set total = cls.required_hours.values() | sum %}
-        {{ total }} heures/semaine
-        {% if cls.required_hours %}
+        {% set normal_total = cls.required_hours.values() | sum %}
+        {% set tp_total = (cls.tp_pairs | map(attribute='count') | sum * 2) if cls.tp_pairs else 0 %}
+        {% set total = normal_total + tp_total %}
+        {{ total }} heures/semaine{% if tp_total > 0 %} (dont {{ tp_total }}h TP){% endif %}
+        {% if cls.required_hours or cls.tp_pairs %}
         ·
         {% for subject, hours in cls.required_hours.items() %}
-        {{ subject }}: {{ hours }}{% if not loop.last %}, {% endif %}
+        {{ subject }}: {{ hours }}{% if not loop.last or cls.tp_pairs %}, {% endif %}
+        {% endfor %}
+        {% for tp in cls.tp_pairs %}
+        TP {{ tp.subj1 }}/{{ tp.subj2 }}: {{ tp.count }}x2h{% if not loop.last %}, {% endif %}
         {% endfor %}
         {% endif %}
       </p>
@@ -92,6 +97,59 @@
       </div>
     </div>
 
+      <!-- TP Pairs -->
+    <div class="form-group" id="tpPairsContainer">
+      <label class="form-label">Travaux Pratiques (TP)</label>
+      <div id="tpPairsList"></div>
+      <button type="button" class="btn btn-secondary btn-sm" id="addTpPairBtn">+ Ajouter un TP</button>
+    </div>
+    <script>
+      const tpPairsList = document.getElementById('tpPairsList');
+      const addTpPairBtn = document.getElementById('addTpPairBtn');
+      function createTpPairRow(pair = null) {
+        const row = document.createElement('div');
+        row.className = 'tp-pair-row';
+        row.style.display = 'flex';
+        row.style.gap = '0.5rem';
+        row.style.marginTop = '0.5rem';
+        const subjSelect1 = document.createElement('select');
+        subjSelect1.className = 'form-input';
+        const subjSelect2 = document.createElement('select');
+        subjSelect2.className = 'form-input';
+        {% for subject in subjects %}
+          const opt1 = document.createElement('option');
+          opt1.value = '{{ subject }}';
+          opt1.textContent = '{{ subject }}';
+          subjSelect1.appendChild(opt1);
+          const opt2 = document.createElement('option');
+          opt2.value = '{{ subject }}';
+          opt2.textContent = '{{ subject }}';
+          subjSelect2.appendChild(opt2);
+        {% endfor %}
+        const countInput = document.createElement('input');
+        countInput.type = 'number';
+        countInput.min = '0';
+        countInput.max = '20';
+        countInput.value = '0';
+        countInput.className = 'form-input';
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn btn-danger btn-sm';
+        removeBtn.textContent = 'Supprimer';
+        removeBtn.onclick = () => row.remove();
+        row.appendChild(subjSelect1);
+        row.appendChild(subjSelect2);
+        row.appendChild(countInput);
+        row.appendChild(removeBtn);
+        if (pair) {
+          subjSelect1.value = pair.subj1;
+          subjSelect2.value = pair.subj2;
+          countInput.value = pair.count;
+        }
+        tpPairsList.appendChild(row);
+      }
+      addTpPairBtn.addEventListener('click', () => createTpPairRow());
+    </script>
     <div class="modal-footer">
       <button class="btn btn-secondary" id="cancelClassModal">Annuler</button>
       <button class="btn btn-primary" id="saveClass">Enregistrer la Classe</button>
@@ -120,6 +178,11 @@ function openClassModal(cls = null) {
     input.value = cls && cls.max_teachers[subj] ? cls.max_teachers[subj] : 1;
   });
 
+  tpPairsList.innerHTML = '';
+  if (cls && cls.tp_pairs && cls.tp_pairs.length > 0) {
+    cls.tp_pairs.forEach(pair => createTpPairRow(pair));
+  }
+
   classModal.classList.add('open');
 }
 
@@ -146,10 +209,25 @@ document.getElementById('saveClass').addEventListener('click', async () => {
     if (val > 0) required_hours[input.dataset.subject] = val;
   });
 
+  const tp_pairs = [];
+  document.querySelectorAll('.tp-pair-row').forEach(row => {
+    const selects = row.querySelectorAll('select');
+    const countInput = row.querySelector('input[type="number"]');
+    if (selects.length >= 2 && countInput) {
+      const subj1 = selects[0].value;
+      const subj2 = selects[1].value;
+      const count = parseInt(countInput.value) || 0;
+      if (subj1 && subj2 && count > 0) {
+        tp_pairs.push({ subj1, subj2, count });
+      }
+    }
+  });
+
   const max_teachers = {};
   document.querySelectorAll('.max-teachers-input').forEach(input => {
     const subj = input.dataset.subject;
-    if (required_hours[subj]) {
+    const inTp = tp_pairs.some(p => p.subj1 === subj || p.subj2 === subj);
+    if (required_hours[subj] || inTp) {
       max_teachers[subj] = parseInt(input.value) || 1;
     }
   });
@@ -159,6 +237,7 @@ document.getElementById('saveClass').addEventListener('click', async () => {
     name,
     required_hours,
     max_teachers,
+    tp_pairs,
   };
 
   const res = await fetch('{{ url_for("save_class") }}', {

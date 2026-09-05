@@ -170,7 +170,15 @@ def derive_allowed_teachers(class_name, subject, teachers_data):
 
 def build_school_class(class_data, teachers_data):
     allowed_teachers = {}
-    for subject in class_data.get("required_hours", {}):
+    all_subjects = set(class_data.get("required_hours", {}).keys())
+    tp_pairs = class_data.get("tp_pairs", []) or []
+    for tp in tp_pairs:
+        if tp.get("subj1"):
+            all_subjects.add(tp["subj1"])
+        if tp.get("subj2"):
+            all_subjects.add(tp["subj2"])
+
+    for subject in all_subjects:
         allowed_teachers[subject] = derive_allowed_teachers(
             class_data["name"], subject, teachers_data
         )
@@ -180,6 +188,7 @@ def build_school_class(class_data, teachers_data):
         required_hours=class_data.get("required_hours", {}),
         max_teachers=class_data.get("max_teachers", {}),
         allowed_teachers=allowed_teachers,
+        tp_pairs=tp_pairs,
     )
 
 
@@ -253,8 +262,16 @@ def validate_before_generate(user_id):
         errors.append("Définissez le nombre de périodes par jour sur la page Créneaux Horaires.")
 
     for cls in data.get("classes", []):
-        for subject, hours in cls.get("required_hours", {}).items():
-            if hours <= 0:
+        all_subjects = set(cls.get("required_hours", {}).keys())
+        tp_pairs = cls.get("tp_pairs", []) or []
+        for tp in tp_pairs:
+            if tp.get("subj1"): all_subjects.add(tp["subj1"])
+            if tp.get("subj2"): all_subjects.add(tp["subj2"])
+
+        for subject in all_subjects:
+            normal_h = cls.get("required_hours", {}).get(subject, 0)
+            tp_h = sum(tp.get("count", 0) * 2 for tp in tp_pairs if tp.get("subj1") == subject or tp.get("subj2") == subject)
+            if normal_h + tp_h <= 0:
                 errors.append(
                     f"Classe {cls['name']} : {subject} a besoin d'au moins 1 heure par semaine."
                 )
@@ -270,10 +287,13 @@ def validate_before_generate(user_id):
 
     total_periods = sum(get_periods_by_day(config).values())
     for cls in data.get("classes", []):
-        required = sum(cls.get("required_hours", {}).values())
+        normal_h = sum(cls.get("required_hours", {}).values())
+        tp_pairs = cls.get("tp_pairs", []) or []
+        tp_periods = sum(tp.get("count", 0) * 2 for tp in tp_pairs)
+        required = normal_h + tp_periods
         if required > total_periods:
             errors.append(
-                f"La classe {cls['name']} a besoin de {required} heures mais seulement "
+                f"La classe {cls['name']} a besoin de {required} heures (incluant les TP) mais seulement "
                 f"{total_periods} créneaux horaires sont disponibles."
             )
 
@@ -698,10 +718,11 @@ def try_remove_lesson(user_id, serialized_schedule, class_name, time_key):
 
 def serialize_schedule(school, user_id):
     """Convert schedule to JSON-serializable format for the UI."""
-    class_view = {}
+    from collections import defaultdict
+    class_view_raw = defaultdict(lambda: defaultdict(list))
     teacher_view = {}
-
     entries = []
+
     for session, assignment in school.schedule.assignments.items():
         ts = assignment.timeslot
         time_label = f"{ts.day} P{ts.period}"
@@ -709,12 +730,16 @@ def serialize_schedule(school, user_id):
         teacher_name = assignment.teacher.name
         subject = session.subject
 
-        class_view.setdefault(cls_name, {})[time_label] = subject
+        class_view_raw[cls_name][time_label].append({
+            "subject": subject,
+            "is_tp": getattr(session, "is_tp", False),
+        })
 
+        display_subj = f"TP {subject}" if getattr(session, "is_tp", False) else subject
         teacher_view.setdefault(teacher_name, []).append({
             "time": time_label,
             "class": cls_name,
-            "subject": subject,
+            "subject": display_subj,
         })
 
         entries.append({
@@ -723,7 +748,18 @@ def serialize_schedule(school, user_id):
             "time": time_label,
             "teacher": teacher_name,
             "teacher_id": assignment.teacher.id,
+            "is_tp": getattr(session, "is_tp", False),
         })
+
+    class_view = {}
+    for cls_name, timeslots_map in class_view_raw.items():
+        class_view[cls_name] = {}
+        for time_label, items in timeslots_map.items():
+            if len(items) == 1:
+                class_view[cls_name][time_label] = items[0]["subject"]
+            else:
+                subjs = sorted(set(it["subject"] for it in items))
+                class_view[cls_name][time_label] = f"TP {' / '.join(subjs)}"
 
     for teacher_name in teacher_view:
         teacher_view[teacher_name].sort(key=lambda x: x["time"])

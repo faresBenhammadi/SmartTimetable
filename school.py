@@ -64,7 +64,8 @@ class SchoolClass:
         name,
         required_hours,
         max_teachers,
-        allowed_teachers
+        allowed_teachers,
+        tp_pairs=None
     ):
         
         self.name = name
@@ -80,16 +81,27 @@ class SchoolClass:
         #   "French": [3,4,5]
         # }
         self.allowed_teachers = allowed_teachers
+
+        # [{"subj1": "Physique", "subj2": "Science", "count": 1}]
+        self.tp_pairs = tp_pairs or []
+
     def __repr__(self):
         return self.name
         
 
 class Session:
-    def __init__(self, school_class, subject,number):
+    def __init__(self, school_class, subject, number, is_tp=False, tp_group_id=None, tp_slot_index=0, tp_partner_subject=None):
         self.school_class = school_class
         self.subject = subject
         self.number = number
+        self.is_tp = is_tp
+        self.tp_group_id = tp_group_id
+        self.tp_slot_index = tp_slot_index
+        self.tp_partner_subject = tp_partner_subject
+
     def __repr__(self):
+        if self.is_tp:
+            return f"{self.school_class.name} - TP {self.subject} ({self.number})"
         return f"{self.school_class.name} - {self.subject} ({self.number})"
 
 class Assignment:
@@ -137,8 +149,25 @@ class School:
             for subject, hours in school_class.required_hours.items():
                 for i in range(hours):
                     self.sessions.append(
-                            Session(school_class,subject,i+1)
-                        )
+                        Session(school_class, subject, i + 1)
+                    )
+
+            tp_pairs = getattr(school_class, "tp_pairs", []) or []
+            for tp_idx, tp in enumerate(tp_pairs):
+                subj1 = tp.get("subj1")
+                subj2 = tp.get("subj2")
+                count = tp.get("count", 0)
+                if not subj1 or not subj2 or count <= 0:
+                    continue
+                for k in range(count):
+                    tp_group_id = f"TP_{school_class.name}_{subj1}_{subj2}_{tp_idx}_{k}"
+                    # Slot 0 of TP (period P)
+                    s_a1 = Session(school_class, subj1, f"TP_{tp_idx+1}_{k+1}_A1", is_tp=True, tp_group_id=tp_group_id, tp_slot_index=0, tp_partner_subject=subj2)
+                    s_b1 = Session(school_class, subj2, f"TP_{tp_idx+1}_{k+1}_B1", is_tp=True, tp_group_id=tp_group_id, tp_slot_index=0, tp_partner_subject=subj1)
+                    # Slot 1 of TP (period P+1)
+                    s_a2 = Session(school_class, subj1, f"TP_{tp_idx+1}_{k+1}_A2", is_tp=True, tp_group_id=tp_group_id, tp_slot_index=1, tp_partner_subject=subj2)
+                    s_b2 = Session(school_class, subj2, f"TP_{tp_idx+1}_{k+1}_B2", is_tp=True, tp_group_id=tp_group_id, tp_slot_index=1, tp_partner_subject=subj1)
+                    self.sessions.extend([s_a1, s_b1, s_a2, s_b2])
 
         return self.sessions
 

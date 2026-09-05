@@ -133,8 +133,96 @@ def _add_teacher_slot_constraints(model, ctx):
 
 
 def _add_class_slot_constraints(model, ctx):
-    for (school_class, timeslot), vars_at in ctx.by_class_slot.items():
-        model.Add(sum(vars_at) <= 1)
+    """
+    At any timeslot ts for a school_class:
+      - Normal sessions take 1 unit of capacity if assigned.
+      - A TP group's slot (e.g. slot 0) takes 1 unit of capacity for the class as a whole
+        (even though it contains 2 simultaneous sessions s_a1 and s_b1).
+      - Total active units for the class at ts must be <= 1.
+    """
+    tp_slot_heads = {}
+    for session in ctx.sessions:
+        if getattr(session, "is_tp", False):
+            key = (session.school_class, session.tp_group_id, session.tp_slot_index)
+            if key not in tp_slot_heads:
+                tp_slot_heads[key] = session
+
+    for school_class in ctx.school.classes:
+        for timeslot in ctx.school.timeslots:
+            normal_vars = [
+                var
+                for session in ctx.sessions
+                if session.school_class == school_class and not getattr(session, "is_tp", False)
+                for _, ts, var, _ in ctx.assign[session]
+                if ts == timeslot
+            ]
+
+            tp_vars = []
+            for (c, g_id, slot_idx), head_session in tp_slot_heads.items():
+                if c == school_class:
+                    rep_vars = [
+                        var
+                        for _, ts, var, _ in ctx.assign[head_session]
+                        if ts == timeslot
+                    ]
+                    tp_vars.extend(rep_vars)
+
+            model.Add(sum(normal_vars) + sum(tp_vars) <= 1)
+
+
+def _add_tp_constraints(model, ctx):
+    """
+    Constraints for TP (Travaux Pratiques) sessions.
+    Each TP group consists of 4 sessions:
+      - Slot 0: s_a1 (subj1) and s_b1 (subj2) scheduled at timeslot T1
+      - Slot 1: s_a2 (subj1) and s_b2 (subj2) scheduled at timeslot T2
+    Where:
+      - T1 and T2 are on the SAME day
+      - period(T2) == period(T1) + 1
+      - s_a1 and s_b1 happen at the exact same timeslot T1
+      - s_a2 and s_b2 happen at the exact same timeslot T2
+    """
+    tp_groups = defaultdict(list)
+    for session in ctx.sessions:
+        if getattr(session, "is_tp", False):
+            tp_groups[session.tp_group_id].append(session)
+
+    for group_id, group_sessions in tp_groups.items():
+        if len(group_sessions) < 4:
+            continue
+        subj_a = group_sessions[0].subject
+        slot0_a = next((s for s in group_sessions if s.tp_slot_index == 0 and s.subject == subj_a), None)
+        slot0_b = next((s for s in group_sessions if s.tp_slot_index == 0 and s.subject != subj_a), None)
+        slot1_a = next((s for s in group_sessions if s.tp_slot_index == 1 and s.subject == subj_a), None)
+        slot1_b = next((s for s in group_sessions if s.tp_slot_index == 1 and s.subject != subj_a), None)
+
+        if not (slot0_a and slot0_b and slot1_a and slot1_b):
+            continue
+
+        # 1. Enforce slot0_a timeslot == slot0_b timeslot
+        for ts in ctx.school.timeslots:
+            vars_a0 = [v for _, t_ts, v, _ in ctx.assign[slot0_a] if t_ts == ts]
+            vars_b0 = [v for _, t_ts, v, _ in ctx.assign[slot0_b] if t_ts == ts]
+            model.Add(sum(vars_a0) == sum(vars_b0))
+
+        # 2. Enforce slot1_a timeslot == slot1_b timeslot
+        for ts in ctx.school.timeslots:
+            vars_a1 = [v for _, t_ts, v, _ in ctx.assign[slot1_a] if t_ts == ts]
+            vars_b1 = [v for _, t_ts, v, _ in ctx.assign[slot1_b] if t_ts == ts]
+            model.Add(sum(vars_a1) == sum(vars_b1))
+
+        # 3. Enforce slot 1 is on the same day and period+1 of slot 0
+        ts_map = {(ts.day, ts.period): ts for ts in ctx.school.timeslots}
+
+        for (day, p), ts0 in ts_map.items():
+            vars_a0 = [v for _, t_ts, v, _ in ctx.assign[slot0_a] if t_ts == ts0]
+            ts1 = ts_map.get((day, p + 1))
+            if ts1:
+                vars_a1 = [v for _, t_ts, v, _ in ctx.assign[slot1_a] if t_ts == ts1]
+                model.Add(sum(vars_a0) == sum(vars_a1))
+            else:
+                # Cannot start slot 0 on the last period of the day
+                model.Add(sum(vars_a0) == 0)
 
 
 def _add_teacher_hour_constraints(model, school, ctx):
@@ -611,12 +699,13 @@ def _add_symmetry_breaking(model, school, ctx):
     max_idx = len(school.timeslots) - 1
     groups = defaultdict(list)
     for session in ctx.sessions:
-        groups[(session.school_class, session.subject)].append(session)
+        if not getattr(session, "is_tp", False):
+            groups[(session.school_class, session.subject)].append(session)
 
     for group in groups.values():
         if len(group) < 2:
             continue
-        group.sort(key=lambda s: s.number)
+        group.sort(key=lambda s: str(s.number))
         slot_vars = []
         for session in group:
             sv = model.NewIntVar(0, max_idx, f"si{ctx._var_id}")
@@ -724,6 +813,7 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None, can
 
     _add_teacher_slot_constraints(model, ctx)
     _add_class_slot_constraints(model, ctx)
+    _add_tp_constraints(model, ctx)
     _add_teacher_hour_constraints(model, school, ctx)
     _add_subject_day_cap_constraints(model, school, ctx)
     _add_subject_min_per_day_constraints(model, ctx)
