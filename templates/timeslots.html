@@ -29,6 +29,23 @@
   </div>
 
   <div class="card">
+    <h3 class="card-title">Horaires & Libellés des périodes</h3>
+    <p class="form-hint" style="margin-bottom: 1rem;">
+      Indiquez l'horaire de chaque période (ex. 08h30 - 09h30). Ces horaires apparaîtront sur l'emploi du temps généré et à l'impression.
+    </p>
+    <div class="hours-grid">
+      {% for p in range(1, max_periods + 1) %}
+      <div class="hours-item">
+        <label for="period_label_{{ p }}">Période P{{ p }}</label>
+        <input type="text" id="period_label_{{ p }}" name="period_labels[{{ p }}]"
+               class="form-input" placeholder="ex: 08h30 - 09h30"
+               value="{{ config.get('period_labels', {}).get(p ~ '') or config.get('period_labels', {}).get(p) or '' }}">
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
     <h3 class="card-title">Aperçu</h3>
     <div class="timetable-grid-wrapper">
       <table class="timetable-grid" id="previewGrid">

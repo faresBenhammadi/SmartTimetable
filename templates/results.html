@@ -56,7 +56,12 @@
         <tbody>
           {% for p in range(1, max_periods + 1) %}
           <tr>
-            <td class="time-col">P{{ p }} : ......</td>
+            {% set p_str = p ~ '' %}
+            {% set p_label = config.get('period_labels', {}).get(p_str) or config.get('period_labels', {}).get(p) %}
+            <td class="time-col">
+              <div><strong>P{{ p }}</strong></div>
+              {% if p_label %}<div style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted); margin-top: 0.15rem;">{{ p_label }}</div>{% endif %}
+            </td>
             {% for day in config.days %}
             {% set time_key = day ~ ' P' ~ p %}
             {% if p <= periods_by_day.get(day, 0) %}
@@ -109,7 +114,12 @@
         <tbody>
           {% for p in range(1, max_periods + 1) %}
           <tr>
-            <td class="time-col">P{{ p }} : ......</td>
+            {% set p_str = p ~ '' %}
+            {% set p_label = config.get('period_labels', {}).get(p_str) or config.get('period_labels', {}).get(p) %}
+            <td class="time-col">
+              <div><strong>P{{ p }}</strong></div>
+              {% if p_label %}<div style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted); margin-top: 0.15rem;">{{ p_label }}</div>{% endif %}
+            </td>
             {% for day in config.days %}
             {% set time_key = day ~ ' P' ~ p %}
             {% if p <= periods_by_day.get(day, 0) %}

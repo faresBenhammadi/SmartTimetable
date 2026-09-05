@@ -172,6 +172,54 @@
     </div>
 
     <div class="divider"></div>
+    <p class="gen-modal-title" style="font-size: 1rem; margin-bottom: 0.25rem;">⚖️ Priorités & Pondération de l'emploi du temps</p>
+    <p class="gen-modal-sub" style="margin-bottom: 1rem;">Ajustez l'importance de chaque critère selon les règles de votre établissement.</p>
+
+    <div class="pref-row">
+      <label class="pref-label" for="weightTeacherGap">Éviter les trous d'emploi du temps des enseignants</label>
+      <select id="weightTeacherGap">
+        <option value="50">Faible</option>
+        <option value="300" selected>Modérée (Recommandé)</option>
+        <option value="600">Forte</option>
+        <option value="1200">Priorité Maximale</option>
+      </select>
+    </div>
+
+    <div class="pref-row">
+      <label class="pref-label" for="weightClassGap">Éviter les trous d'emploi du temps des élèves</label>
+      <select id="weightClassGap">
+        <option value="30">Faible</option>
+        <option value="150" selected>Modérée (Recommandé)</option>
+        <option value="400">Forte</option>
+      </select>
+    </div>
+
+    <div class="pref-row">
+      <label class="pref-label" for="weightSubjectPref">Respect des créneaux de matières (Arabe, Français...)</label>
+      <select id="weightSubjectPref">
+        <option value="50">Souple</option>
+        <option value="200" selected>Important (Recommandé)</option>
+        <option value="600">Très Important</option>
+      </select>
+    </div>
+
+    <div class="pref-row">
+      <label class="pref-label" for="weightWorkingDay">Réduire le nombre de jours de présence des profs</label>
+      <select id="weightWorkingDay">
+        <option value="10">Souple</option>
+        <option value="50" selected>Moyen (Recommandé)</option>
+        <option value="150">Élevé</option>
+      </select>
+    </div>
+
+    <div class="pref-row">
+      <label class="pref-label" for="weightClassSwitch">Stabilité des classes par enseignant</label>
+      <select id="weightClassSwitch">
+        <option value="50">Souple</option>
+        <option value="300" selected>Important (Recommandé)</option>
+        <option value="600">Très Important</option>
+      </select>
+    </div>
 
     <div class="pref-row">
       <div class="toggle-row">
@@ -268,7 +316,18 @@ confirmBtn?.addEventListener('click', async () => {
   const minExit  = document.getElementById('minExitPeriod').value;
   const allowGaps = document.getElementById('allowGapsToggle').checked;
 
-  const payload = { allow_student_gaps: allowGaps };
+  const weights = {
+    teacher_gap: parseInt(document.getElementById('weightTeacherGap').value) || 300,
+    class_gap: parseInt(document.getElementById('weightClassGap').value) || 150,
+    subject_pref: parseInt(document.getElementById('weightSubjectPref').value) || 200,
+    working_day: parseInt(document.getElementById('weightWorkingDay').value) || 50,
+    class_switch: parseInt(document.getElementById('weightClassSwitch').value) || 300,
+  };
+
+  const payload = {
+    allow_student_gaps: allowGaps,
+    weights: weights,
+  };
   if (maxEntry) payload.max_entry_period = parseInt(maxEntry);
   if (minExit)  payload.min_exit_period  = parseInt(minExit);
 

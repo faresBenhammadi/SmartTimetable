@@ -733,22 +733,32 @@ a {
 
 .timetable-grid-table {
   table-layout: fixed;
+  width: 100%;
 }
 
 .timetable-grid-table th:first-child,
 .timetable-grid-table td:first-child {
-  width: 120px;
+  width: 130px;
 }
 
 .session-cell {
-  min-width: 140px;
-  min-height: 68px;
   vertical-align: middle;
   font-weight: 600;
   color: var(--text);
-  border-radius: 12px;
-  padding: 0.75rem 0.85rem;
+  border-radius: 8px;
+  padding: 0.5rem 0.4rem;
   text-align: center;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  hyphens: auto;
+  font-size: 0.875rem;
+  line-height: 1.25;
+}
+
+.session-cell strong {
+  display: block;
+  word-break: break-word;
 }
 
 .session-cell.empty-cell {
@@ -756,10 +766,11 @@ a {
 }
 
 .session-subject {
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   color: var(--text-muted);
   margin-top: 0.25rem;
   font-weight: 500;
+  word-break: break-word;
 }
 
 .teacher-section {

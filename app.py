@@ -411,11 +411,18 @@ def timeslots():
                 return redirect(url_for("timeslots"))
             day_periods[day] = value
 
+        period_labels = {}
+        for p in range(1, 13):
+            label = request.form.get(f"period_labels[{p}]", "").strip()
+            if label:
+                period_labels[str(p)] = label
+
         data_store.set_timeslots_config(
             {
                 "days": days,
                 "periods_per_day": max(day_periods.values()),
                 "day_periods": day_periods,
+                "period_labels": period_labels,
             },
             user_id
         )

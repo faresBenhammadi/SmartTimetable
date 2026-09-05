@@ -7,23 +7,30 @@ t0 = time.perf_counter()
 from ortools.sat.python import cp_model
 
 from school import Assignment, Schedule
-WORKING_DAY_WEIGHT = 50
-TEACHER_PREFERENCE_WEIGHT = 10
-BLOCK_PENALTY_WEIGHT = 250
-SUBJECT_PREFERENCE_WEIGHT = 200
-CLASS_SWITCH_WEIGHT = 300
-TEACHER_GAP_WEIGHT = 300
-CLASS_GAP_WEIGHT = 150
+DEFAULT_WEIGHTS = {
+    "working_day": 50,
+    "teacher_pref": 10,
+    "block_penalty": 250,
+    "subject_pref": 200,
+    "class_switch": 300,
+    "teacher_gap": 300,
+    "class_gap": 150,
+}
 
 
 class _ModelContext:
     """Pre-built indexes and shared auxiliary variables for one CP-SAT model."""
 
-    def __init__(self, model, school, sessions, assign):
+    def __init__(self, model, school, sessions, assign, weights=None):
         self.model = model
         self.school = school
         self.sessions = sessions
         self.assign = assign
+        self.weights = DEFAULT_WEIGHTS.copy()
+        if weights and isinstance(weights, dict):
+            for k, v in weights.items():
+                if isinstance(v, (int, float)):
+                    self.weights[k] = int(v)
         self.days = sorted({ts.day for ts in school.timeslots})
         self.all_periods = sorted({ts.period for ts in school.timeslots})
         self._var_id = 0
@@ -100,8 +107,9 @@ def _subjects_with_preferences(school):
     ]
 
 
-def _build_assignment_vars(model, school, sessions, domains):
+def _build_assignment_vars(model, school, sessions, domains, weights=None):
     """Create one BoolVar per valid (session, teacher, timeslot) triple."""
+    teacher_pref_w = weights.get("teacher_pref", 10) if weights else 10
     assign = {}
     var_id = 0
     for session in sessions:
@@ -110,7 +118,7 @@ def _build_assignment_vars(model, school, sessions, domains):
             var_id += 1
             var = model.NewBoolVar(f"a{var_id}")
             teacher_penalty = (
-                TEACHER_PREFERENCE_WEIGHT
+                teacher_pref_w
                 if teacher.preferred_slots and timeslot not in teacher.preferred_slots
                 else 0
             )
@@ -353,6 +361,7 @@ def _add_block_penalty_objective(model, ctx, objective_terms):
     if not ctx.all_periods:
         return
 
+    weight = ctx.weights.get("block_penalty", 250)
     min_period = ctx.all_periods[0]
     max_period = ctx.all_periods[-1]
 
@@ -402,7 +411,7 @@ def _add_block_penalty_objective(model, ctx, objective_terms):
         ctx._var_id += 1
         model.Add(gaps == span - count).OnlyEnforceIf(has_any)
         model.Add(gaps == 0).OnlyEnforceIf(has_any.Not())
-        objective_terms.append(BLOCK_PENALTY_WEIGHT * gaps)
+        objective_terms.append(weight * gaps)
 
 
 def _add_class_continuity_penalty(model, ctx, objective_terms):
@@ -410,6 +419,7 @@ def _add_class_continuity_penalty(model, ctx, objective_terms):
     Penalize a teacher teaching class A, then class B, then class A again
     on the same day. Uses O(classes) vars per period pair instead of O(C²).
     """
+    weight = ctx.weights.get("class_switch", 300)
     for teacher in ctx.school.teachers:
         for day in ctx.days:
             period_class_vars = defaultdict(list)
@@ -474,7 +484,7 @@ def _add_class_continuity_penalty(model, ctx, objective_terms):
                         switch.Not()
                     )
 
-                objective_terms.append(CLASS_SWITCH_WEIGHT * switch)
+                objective_terms.append(weight * switch)
 
 def _add_teacher_working_days_penalty(model, ctx, objective_terms):
     """
@@ -483,6 +493,7 @@ def _add_teacher_working_days_penalty(model, ctx, objective_terms):
 
     Uses one BoolVar per (teacher, day), so the overhead is very small.
     """
+    weight = ctx.weights.get("working_day", 50)
     for teacher in ctx.school.teachers:
         for day in ctx.days:
             busy_periods = []
@@ -502,9 +513,10 @@ def _add_teacher_working_days_penalty(model, ctx, objective_terms):
                 works_today.Not()
             )
 
-            objective_terms.append(WORKING_DAY_WEIGHT * works_today)
+            objective_terms.append(weight * works_today)
 
 def _add_teacher_gap_penalty(model, ctx, objective_terms):
+    weight = ctx.weights.get("teacher_gap", 300)
     for teacher in ctx.school.teachers:
         for day in ctx.days:
             busy_by_period = {}
@@ -537,10 +549,11 @@ def _add_teacher_gap_penalty(model, ctx, objective_terms):
                         busy_after.Not(),
                     ]
                 ).OnlyEnforceIf(is_gap.Not())
-                objective_terms.append(TEACHER_GAP_WEIGHT * is_gap)
+                objective_terms.append(weight * is_gap)
 
 
 def _add_class_gap_penalty(model, ctx, objective_terms):
+    weight = ctx.weights.get("class_gap", 150)
     for school_class in ctx.school.classes:
         for day in ctx.days:
             busy_by_period = {}
@@ -574,17 +587,18 @@ def _add_class_gap_penalty(model, ctx, objective_terms):
                         busy_by_period[p_next].Not(),
                     ]
                 ).OnlyEnforceIf(is_gap.Not())
-                objective_terms.append(CLASS_GAP_WEIGHT * is_gap)
+                objective_terms.append(weight * is_gap)
 
 
 def _add_subject_preference_soft(model, school, ctx, objective_terms):
+    weight = ctx.weights.get("subject_pref", 200)
     for session in ctx.sessions:
         preferred = school.get_subject_preferred_slots(session.subject)
         if not preferred:
             continue
         for _, ts, var, _ in ctx.assign[session]:
             if ts not in preferred:
-                objective_terms.append(SUBJECT_PREFERENCE_WEIGHT * var)
+                objective_terms.append(weight * var)
 
 
 def _add_max_entry_period_constraint(model, ctx, max_entry_period):
@@ -804,9 +818,10 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None, can
 
     domains = school.generate_domains()
 
+    weights = generation_prefs.get("weights", {})
     model = cp_model.CpModel()
-    assign = _build_assignment_vars(model, school, sessions, domains)
-    ctx = _ModelContext(model, school, sessions, assign)
+    assign = _build_assignment_vars(model, school, sessions, domains, weights=weights)
+    ctx = _ModelContext(model, school, sessions, assign, weights=weights)
 
     if not _add_session_constraints(model, assign):
         return None, "Une leçon n'a pas d'options de placement valides."
