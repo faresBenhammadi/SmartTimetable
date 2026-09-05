@@ -101,55 +101,8 @@
     <div class="form-group" id="tpPairsContainer">
       <label class="form-label">Travaux Pratiques (TP)</label>
       <div id="tpPairsList"></div>
-      <button type="button" class="btn btn-secondary btn-sm" id="addTpPairBtn">+ Ajouter un TP</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="addTpPairBtn" style="margin-top: 0.5rem;">+ Ajouter un TP</button>
     </div>
-    <script>
-      const tpPairsList = document.getElementById('tpPairsList');
-      const addTpPairBtn = document.getElementById('addTpPairBtn');
-      function createTpPairRow(pair = null) {
-        const row = document.createElement('div');
-        row.className = 'tp-pair-row';
-        row.style.display = 'flex';
-        row.style.gap = '0.5rem';
-        row.style.marginTop = '0.5rem';
-        const subjSelect1 = document.createElement('select');
-        subjSelect1.className = 'form-input';
-        const subjSelect2 = document.createElement('select');
-        subjSelect2.className = 'form-input';
-        {% for subject in subjects %}
-          const opt1 = document.createElement('option');
-          opt1.value = '{{ subject }}';
-          opt1.textContent = '{{ subject }}';
-          subjSelect1.appendChild(opt1);
-          const opt2 = document.createElement('option');
-          opt2.value = '{{ subject }}';
-          opt2.textContent = '{{ subject }}';
-          subjSelect2.appendChild(opt2);
-        {% endfor %}
-        const countInput = document.createElement('input');
-        countInput.type = 'number';
-        countInput.min = '0';
-        countInput.max = '20';
-        countInput.value = '0';
-        countInput.className = 'form-input';
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.className = 'btn btn-danger btn-sm';
-        removeBtn.textContent = 'Supprimer';
-        removeBtn.onclick = () => row.remove();
-        row.appendChild(subjSelect1);
-        row.appendChild(subjSelect2);
-        row.appendChild(countInput);
-        row.appendChild(removeBtn);
-        if (pair) {
-          subjSelect1.value = pair.subj1;
-          subjSelect2.value = pair.subj2;
-          countInput.value = pair.count;
-        }
-        tpPairsList.appendChild(row);
-      }
-      addTpPairBtn.addEventListener('click', () => createTpPairRow());
-    </script>
     <div class="modal-footer">
       <button class="btn btn-secondary" id="cancelClassModal">Annuler</button>
       <button class="btn btn-primary" id="saveClass">Enregistrer la Classe</button>
@@ -162,6 +115,81 @@
 <script>
 const classModal = document.getElementById('classModal');
 const originalNameInput = document.getElementById('originalClassName');
+const tpPairsList = document.getElementById('tpPairsList');
+const addTpPairBtn = document.getElementById('addTpPairBtn');
+const SUBJECTS = {{ subjects | tojson }};
+
+function createTpPairRow(pair = null) {
+  const row = document.createElement('div');
+  row.className = 'tp-pair-row';
+  row.style.display = 'flex';
+  row.style.gap = '0.5rem';
+  row.style.marginTop = '0.5rem';
+  row.style.alignItems = 'center';
+  row.style.flexWrap = 'wrap';
+
+  const subjSelect1 = document.createElement('select');
+  subjSelect1.className = 'form-input';
+  subjSelect1.style.flex = '1';
+  subjSelect1.style.minWidth = '120px';
+
+  const subjSelect2 = document.createElement('select');
+  subjSelect2.className = 'form-input';
+  subjSelect2.style.flex = '1';
+  subjSelect2.style.minWidth = '120px';
+
+  SUBJECTS.forEach((subj) => {
+    const opt1 = document.createElement('option');
+    opt1.value = subj;
+    opt1.textContent = subj;
+    subjSelect1.appendChild(opt1);
+
+    const opt2 = document.createElement('option');
+    opt2.value = subj;
+    opt2.textContent = subj;
+    subjSelect2.appendChild(opt2);
+  });
+
+  if (SUBJECTS.length > 1 && !pair) {
+    subjSelect2.selectedIndex = 1;
+  }
+
+  const countInput = document.createElement('input');
+  countInput.type = 'number';
+  countInput.min = '1';
+  countInput.max = '10';
+  countInput.value = '1';
+  countInput.className = 'form-input';
+  countInput.style.width = '80px';
+  countInput.title = 'Nombre de TP par semaine';
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'btn btn-danger btn-sm';
+  removeBtn.textContent = 'Supprimer';
+  removeBtn.onclick = (e) => {
+    e.preventDefault();
+    row.remove();
+  };
+
+  row.appendChild(subjSelect1);
+  row.appendChild(subjSelect2);
+  row.appendChild(countInput);
+  row.appendChild(removeBtn);
+
+  if (pair) {
+    if (pair.subj1) subjSelect1.value = pair.subj1;
+    if (pair.subj2) subjSelect2.value = pair.subj2;
+    if (pair.count) countInput.value = pair.count;
+  }
+
+  tpPairsList.appendChild(row);
+}
+
+addTpPairBtn.addEventListener('click', (e) => {
+  e.preventDefault();
+  createTpPairRow();
+});
 
 function openClassModal(cls = null) {
   document.getElementById('classModalTitle').textContent = cls ? 'Modifier la Classe' : 'Ajouter une Classe';
