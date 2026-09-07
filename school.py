@@ -309,7 +309,10 @@ class School:
                 other_session.school_class == session.school_class
                 and assignment.timeslot == timeslot
             ):
+                if getattr(session, "is_tp", False) and getattr(other_session, "is_tp", False) and session.subject != other_session.subject:
+                    continue
                 return False
+
 
         hours = 0
         for assignment in self.schedule.assignments.values():
@@ -778,10 +781,13 @@ class School:
                     f"({assignment.timeslot.day} P{assignment.timeslot.period}) avec la classe {other_session.school_class.name}."
                 )
             if other_session.school_class == session.school_class and assignment.timeslot == timeslot:
+                if getattr(session, "is_tp", False) and getattr(other_session, "is_tp", False) and session.subject != other_session.subject:
+                    continue
                 return (
                     f"La classe {session.school_class.name} a déjà un cours de {other_session.subject} "
                     f"sur le créneau {assignment.timeslot.day} P{assignment.timeslot.period} avec l'enseignant {assignment.teacher.name}."
                 )
+
 
         teachers_used = set()
         for other_session, assignment in schedule.assignments.items():
