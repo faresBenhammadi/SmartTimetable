@@ -768,14 +768,20 @@ class School:
 
         return neighbors
 
-    def is_consistent_with(self, session, teacher, timeslot, schedule, ignore_subject_slot_allowed=False):
+    def get_inconsistency_reason(self, session, teacher, timeslot, schedule, ignore_subject_slot_allowed=False):
         for other_session, assignment in schedule.assignments.items():
             if other_session == session:
                 continue
             if assignment.teacher == teacher and assignment.timeslot == timeslot:
-                return False
+                return (
+                    f"L'enseignant {teacher.name} a déjà un cours sur ce créneau "
+                    f"({assignment.timeslot.day} P{assignment.timeslot.period}) avec la classe {other_session.school_class.name}."
+                )
             if other_session.school_class == session.school_class and assignment.timeslot == timeslot:
-                return False
+                return (
+                    f"La classe {session.school_class.name} a déjà un cours de {other_session.subject} "
+                    f"sur le créneau {assignment.timeslot.day} P{assignment.timeslot.period} avec l'enseignant {assignment.teacher.name}."
+                )
 
         teachers_used = set()
         for other_session, assignment in schedule.assignments.items():
@@ -786,8 +792,12 @@ class School:
                 teachers_used.add(assignment.teacher.id)
         teachers_used.add(teacher.id)
 
-        if len(teachers_used) > session.school_class.max_teachers[session.subject]:
-            return False
+        max_t = session.school_class.max_teachers.get(session.subject, 1) if isinstance(session.school_class.max_teachers, dict) else 1
+        if len(teachers_used) > max_t:
+            return (
+                f"Le nombre maximum d'enseignants autorisés ({max_t}) pour la matière '{session.subject}' "
+                f"dans la classe {session.school_class.name} serait dépassé."
+            )
 
         subject_count = sum(
             1 for other_session, assignment in schedule.assignments.items()
@@ -798,15 +808,27 @@ class School:
         )
         max_per_day = self.get_subject_max_per_day(session.subject)
         if subject_count >= max_per_day:
-            return False
+            return (
+                f"La matière '{session.subject}' dépasserait son quota maximal de {max_per_day} cours/jour "
+                f"le {timeslot.day} pour la classe {session.school_class.name}."
+            )
 
         if timeslot in teacher.unavailable_slots:
-            return False
+            return (
+                f"L'enseignant {teacher.name} est indiqué comme indisponible "
+                f"le {timeslot.day} P{timeslot.period}."
+            )
 
         if not ignore_subject_slot_allowed and not self.is_subject_slot_allowed(session.subject, timeslot):
-            return False
+            return (
+                f"Le créneau {timeslot.day} P{timeslot.period} n'est pas autorisé pour la matière '{session.subject}'."
+            )
 
-        return True
+        return None
+
+    def is_consistent_with(self, session, teacher, timeslot, schedule, ignore_subject_slot_allowed=False):
+        return self.get_inconsistency_reason(session, teacher, timeslot, schedule, ignore_subject_slot_allowed=ignore_subject_slot_allowed) is None
+
 
     # ─── SIMULATED ANNEALING ────────────────────────────────────────────────────
 

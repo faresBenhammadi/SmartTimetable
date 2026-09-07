@@ -449,14 +449,23 @@ def _build_schedule_from_serialized(school, serialized_schedule):
         if cls is None or teacher is None or timeslot is None:
             return None, "Les métadonnées de l'emploi du temps sont invalides ou désynchronisées avec la configuration actuelle."
 
+        is_tp = entry.get("is_tp", False)
         candidates = [
             s for s in school.sessions
             if s.school_class == cls and s.subject == entry.get("subject")
+            and getattr(s, "is_tp", False) == is_tp
         ]
         session = next((s for s in candidates if s not in assigned_sessions), None)
         if session is None:
+            candidates_fallback = [
+                s for s in school.sessions
+                if s.school_class == cls and s.subject == entry.get("subject")
+            ]
+            session = next((s for s in candidates_fallback if s not in assigned_sessions), None)
+
+        if session is None:
             next_num = len(candidates) + 1
-            session = Session(cls, entry.get("subject"), next_num)
+            session = Session(cls, entry.get("subject"), next_num, is_tp=is_tp)
             school.sessions.append(session)
 
         schedule.assign(session, Assignment(teacher, timeslot))
@@ -538,18 +547,19 @@ def try_swap_class_cells(user_id, serialized_schedule, class_name, time_a, time_
                 new_schedule.assign(session, assignment)
 
     for session, assignment in new_schedule.assignments.items():
-        if not school.is_consistent_with(
+        reason = school.get_inconsistency_reason(
             session,
             assignment.teacher,
             assignment.timeslot,
             new_schedule,
             ignore_subject_slot_allowed=True,
-        ):
-            return False, "Ce déplacement enfreindrait une contrainte de planification obligatoire."
+        )
+        if reason:
+            return False, reason
 
     min_violations = school.validate_min_per_day_schedule(new_schedule)
     if min_violations:
-        return False, min_violations[0]
+        return False, f"Contrainte de volume quotidien non respectée : {min_violations[0]}"
 
     school.schedule = new_schedule
     return True, serialize_schedule(school, user_id)
@@ -601,18 +611,19 @@ def try_swap_teacher_cells(user_id, serialized_schedule, teacher_name, time_a, t
             new_schedule.assign(session, assignment)
 
     for session, assignment in new_schedule.assignments.items():
-        if not school.is_consistent_with(
+        reason = school.get_inconsistency_reason(
             session,
             assignment.teacher,
             assignment.timeslot,
             new_schedule,
             ignore_subject_slot_allowed=True,
-        ):
-            return False, "Cet échange enfreindrait une contrainte de planification obligatoire."
+        )
+        if reason:
+            return False, reason
 
     min_violations = school.validate_min_per_day_schedule(new_schedule)
     if min_violations:
-        return False, min_violations[0]
+        return False, f"Contrainte de volume quotidien non respectée : {min_violations[0]}"
 
     school.schedule = new_schedule
     return True, serialize_schedule(school, user_id)
@@ -662,7 +673,7 @@ def try_add_lesson(user_id, serialized_schedule, class_name, time_key, subject_n
     )
     max_per_day = school.get_subject_max_per_day(subject_name)
     if subject_count >= max_per_day:
-        return False, f"La limite quotidienne pour la matière {subject_name} ({max_per_day} cours/jour) est dépassée."
+        return False, f"La limite quotidienne pour la matière '{subject_name}' ({max_per_day} cours/jour) est dépassée le {timeslot.day}."
 
     candidates = [
         s for s in school.sessions
@@ -674,21 +685,23 @@ def try_add_lesson(user_id, serialized_schedule, class_name, time_key, subject_n
 
     schedule_obj.assign(new_session, Assignment(teacher, timeslot))
 
-    if not school.is_consistent_with(
+    reason = school.get_inconsistency_reason(
         new_session,
         teacher,
         timeslot,
         schedule_obj,
         ignore_subject_slot_allowed=True,
-    ):
-        return False, "L'ajout enfreint une contrainte de planification."
+    )
+    if reason:
+        return False, reason
 
     min_violations = school.validate_min_per_day_schedule(schedule_obj)
     if min_violations:
-        return False, min_violations[0]
+        return False, f"Contrainte de volume quotidien non respectée : {min_violations[0]}"
 
     school.schedule = schedule_obj
     return True, serialize_schedule(school, user_id)
+
 
 
 def try_remove_lesson(user_id, serialized_schedule, class_name, time_key):
