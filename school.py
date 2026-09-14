@@ -65,7 +65,8 @@ class SchoolClass:
         required_hours,
         max_teachers,
         allowed_teachers,
-        tp_pairs=None
+        tp_pairs=None,
+        fixed_slots=None
     ):
         
         self.name = name
@@ -85,8 +86,12 @@ class SchoolClass:
         # [{"subj1": "Physique", "subj2": "Science", "count": 1}]
         self.tp_pairs = tp_pairs or []
 
+        # [{"day": "Sunday", "period": 1, "subject": "French", "teacher_id": 21, "is_tp": False, "subj2": None}]
+        self.fixed_slots = fixed_slots or []
+
     def __repr__(self):
         return self.name
+
         
 
 class Session:

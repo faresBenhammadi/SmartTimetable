@@ -340,10 +340,14 @@ def delete_teacher(teacher_id):
 @app.route("/classes")
 def classes():
     user_id = session.get("user_id")
+    config = data_store.get_timeslots_config(user_id)
     return render_template(
         "classes.html",
         classes=data_store.get_classes(user_id),
         subjects=data_store.get_subject_names(user_id),
+        teachers=data_store.get_teachers(user_id),
+        days=config.get("days", []),
+        periods_by_day=solver_adapter.get_periods_by_day(config),
     )
 
 
@@ -357,6 +361,7 @@ def save_class():
         "required_hours": payload.get("required_hours", {}),
         "max_teachers": payload.get("max_teachers", {}),
         "tp_pairs": payload.get("tp_pairs", []),
+        "fixed_slots": payload.get("fixed_slots", []),
     }
 
     if not class_data["name"]:
@@ -374,6 +379,7 @@ def save_class():
 
     data_store.set_classes(classes_list, user_id)
     return jsonify({"ok": True, "class": class_data})
+
 
 
 @app.route("/classes/<name>/delete", methods=["POST"])

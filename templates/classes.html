@@ -34,6 +34,16 @@
         {% endfor %}
         {% endif %}
       </p>
+      {% if cls.fixed_slots %}
+      <p style="margin-top: 0.25rem; font-size: 0.85rem; color: var(--color-primary);">
+        📌 <strong>Créneaux imposés :</strong>
+        {% for rule in cls.fixed_slots %}
+          {% set day_name = rule.day %}
+          {% set day_fr = 'Dimanche' if day_name=='Sunday' else ('Lundi' if day_name=='Monday' else ('Mardi' if day_name=='Tuesday' else ('Mercredi' if day_name=='Wednesday' else ('Jeudi' if day_name=='Thursday' else ('Vendredi' if day_name=='Friday' else 'Samedi'))))) %}
+          {{ day_fr }} P{{ rule.period }}{% if rule.is_tp %}-P{{ rule.period + 1 }}{% endif %} ({{ rule.subject }}){% if not loop.last %} · {% endif %}
+        {% endfor %}
+      </p>
+      {% endif %}
     </div>
     <div class="list-item-actions">
       <button class="btn btn-secondary btn-sm edit-class-btn"
@@ -55,7 +65,7 @@
 
 <!-- Class Modal -->
 <div class="modal-overlay" id="classModal">
-  <div class="modal" style="max-width: 640px;">
+  <div class="modal" style="max-width: 680px;">
     <div class="modal-header">
       <h3 id="classModalTitle">Ajouter une Classe</h3>
       <button class="modal-close" id="closeClassModal">&times;</button>
@@ -97,12 +107,23 @@
       </div>
     </div>
 
-      <!-- TP Pairs -->
+    <!-- TP Pairs -->
     <div class="form-group" id="tpPairsContainer">
       <label class="form-label">Travaux Pratiques (TP)</label>
       <div id="tpPairsList"></div>
       <button type="button" class="btn btn-secondary btn-sm" id="addTpPairBtn" style="margin-top: 0.5rem;">+ Ajouter un TP</button>
     </div>
+
+    <!-- Fixed / Forced Slots -->
+    <div class="form-group" id="fixedSlotsContainer" style="border-top: 1px solid var(--color-border); padding-top: 1rem; margin-top: 1rem;">
+      <label class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>📌 Créneaux imposés (Forcer une matière sur un créneau)</span>
+      </label>
+      <p class="form-hint" style="margin-bottom: 0.5rem;">Impose le placement d'une matière ou d'un TP lors de la génération automatique.</p>
+      <div id="fixedSlotsList"></div>
+      <button type="button" class="btn btn-secondary btn-sm" id="addFixedSlotBtn" style="margin-top: 0.5rem;">+ Imposer un créneau</button>
+    </div>
+
     <div class="modal-footer">
       <button class="btn btn-secondary" id="cancelClassModal">Annuler</button>
       <button class="btn btn-primary" id="saveClass">Enregistrer la Classe</button>
@@ -117,7 +138,22 @@ const classModal = document.getElementById('classModal');
 const originalNameInput = document.getElementById('originalClassName');
 const tpPairsList = document.getElementById('tpPairsList');
 const addTpPairBtn = document.getElementById('addTpPairBtn');
+const fixedSlotsList = document.getElementById('fixedSlotsList');
+const addFixedSlotBtn = document.getElementById('addFixedSlotBtn');
+
 const SUBJECTS = {{ subjects | tojson }};
+const DAYS = {{ days | default([]) | tojson }};
+const PERIODS_BY_DAY = {{ periods_by_day | default({}) | tojson }};
+const TEACHERS = {{ teachers | default([]) | tojson }};
+const DAY_MAP = {
+  "Sunday": "Dimanche",
+  "Monday": "Lundi",
+  "Tuesday": "Mardi",
+  "Wednesday": "Mercredi",
+  "Thursday": "Jeudi",
+  "Friday": "Vendredi",
+  "Saturday": "Samedi"
+};
 
 function createTpPairRow(pair = null) {
   const row = document.createElement('div');
@@ -186,9 +222,168 @@ function createTpPairRow(pair = null) {
   tpPairsList.appendChild(row);
 }
 
+function createFixedSlotRow(rule = null) {
+  const row = document.createElement('div');
+  row.className = 'fixed-slot-row';
+  row.style.display = 'flex';
+  row.style.gap = '0.5rem';
+  row.style.marginTop = '0.5rem';
+  row.style.alignItems = 'center';
+  row.style.flexWrap = 'wrap';
+
+  // 1. Subject / TP dropdown
+  const subjSelect = document.createElement('select');
+  subjSelect.className = 'form-input fixed-subject-select';
+  subjSelect.style.flex = '1.2';
+  subjSelect.style.minWidth = '130px';
+
+  // Populate normal subjects
+  SUBJECTS.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = JSON.stringify({ is_tp: false, subject: s });
+    opt.textContent = s;
+    subjSelect.appendChild(opt);
+  });
+
+  // Populate TP pairs from current TP list
+  document.querySelectorAll('.tp-pair-row').forEach(tpRow => {
+    const selects = tpRow.querySelectorAll('select');
+    if (selects.length >= 2) {
+      const s1 = selects[0].value;
+      const s2 = selects[1].value;
+      if (s1 && s2) {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify({ is_tp: true, subject: s1, tp_subj2: s2 });
+        opt.textContent = `TP ${s1} / ${s2}`;
+        subjSelect.appendChild(opt);
+      }
+    }
+  });
+
+  // 2. Slot dropdown
+  const slotSelect = document.createElement('select');
+  slotSelect.className = 'form-input fixed-slot-select';
+  slotSelect.style.flex = '1.4';
+  slotSelect.style.minWidth = '140px';
+
+  function updateSlotsDropdown() {
+    const prevVal = slotSelect.value;
+    slotSelect.innerHTML = '';
+    let selectedSubjInfo = {};
+    try { selectedSubjInfo = JSON.parse(subjSelect.value); } catch(e){}
+
+    DAYS.forEach(day => {
+      const dayFr = DAY_MAP[day] || day;
+      const maxP = PERIODS_BY_DAY[day] || 6;
+      for (let p = 1; p <= maxP; p++) {
+        if (selectedSubjInfo.is_tp && p === maxP) {
+          continue;
+        }
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify({ day, period: p });
+        opt.textContent = selectedSubjInfo.is_tp ? `${dayFr} P${p}-P${p+1} (2h)` : `${dayFr} P${p}`;
+        slotSelect.appendChild(opt);
+      }
+    });
+    if (prevVal) slotSelect.value = prevVal;
+  }
+
+  subjSelect.addEventListener('change', updateSlotsDropdown);
+  updateSlotsDropdown();
+
+  // 3. Teacher dropdown
+  const teacherSelect = document.createElement('select');
+  teacherSelect.className = 'form-input fixed-teacher-select';
+  teacherSelect.style.flex = '1.2';
+  teacherSelect.style.minWidth = '130px';
+
+  function updateTeachersDropdown() {
+    const currentVal = teacherSelect.value;
+    teacherSelect.innerHTML = '';
+    const anyOpt = document.createElement('option');
+    anyOpt.value = '';
+    anyOpt.textContent = 'Tous profs autorisés';
+    teacherSelect.appendChild(anyOpt);
+
+    let selectedSubjInfo = {};
+    try { selectedSubjInfo = JSON.parse(subjSelect.value); } catch(e){}
+
+    const targetSubj = selectedSubjInfo.subject;
+    const currentClassName = document.getElementById('className').value.trim();
+
+    TEACHERS.forEach(t => {
+      const teachesSubj = (t.subjects || []).includes(targetSubj) || (selectedSubjInfo.tp_subj2 && (t.subjects || []).includes(selectedSubjInfo.tp_subj2));
+      const allowsClass = !currentClassName || !t.allowed_classes || t.allowed_classes.length === 0 || t.allowed_classes.includes(currentClassName);
+      if (teachesSubj && allowsClass) {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        teacherSelect.appendChild(opt);
+      }
+    });
+
+    if (currentVal) teacherSelect.value = currentVal;
+  }
+
+  subjSelect.addEventListener('change', updateTeachersDropdown);
+  updateTeachersDropdown();
+
+  // 4. Remove button
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'btn btn-danger btn-sm';
+  removeBtn.textContent = 'Supprimer';
+  removeBtn.onclick = (e) => {
+    e.preventDefault();
+    row.remove();
+  };
+
+  row.appendChild(subjSelect);
+  row.appendChild(slotSelect);
+  row.appendChild(teacherSelect);
+  row.appendChild(removeBtn);
+
+  if (rule) {
+    for (let opt of subjSelect.options) {
+      try {
+        const info = JSON.parse(opt.value);
+        if (info.is_tp === !!rule.is_tp && info.subject === rule.subject) {
+          if (!info.is_tp || info.tp_subj2 === rule.tp_subj2) {
+            subjSelect.value = opt.value;
+            break;
+          }
+        }
+      } catch(e){}
+    }
+    updateSlotsDropdown();
+    updateTeachersDropdown();
+
+    for (let opt of slotSelect.options) {
+      try {
+        const slot = JSON.parse(opt.value);
+        if (slot.day === rule.day && slot.period === rule.period) {
+          slotSelect.value = opt.value;
+          break;
+        }
+      } catch(e){}
+    }
+
+    if (rule.teacher_id) {
+      teacherSelect.value = rule.teacher_id;
+    }
+  }
+
+  fixedSlotsList.appendChild(row);
+}
+
 addTpPairBtn.addEventListener('click', (e) => {
   e.preventDefault();
   createTpPairRow();
+});
+
+addFixedSlotBtn.addEventListener('click', (e) => {
+  e.preventDefault();
+  createFixedSlotRow();
 });
 
 function openClassModal(cls = null) {
@@ -209,6 +404,11 @@ function openClassModal(cls = null) {
   tpPairsList.innerHTML = '';
   if (cls && cls.tp_pairs && cls.tp_pairs.length > 0) {
     cls.tp_pairs.forEach(pair => createTpPairRow(pair));
+  }
+
+  fixedSlotsList.innerHTML = '';
+  if (cls && cls.fixed_slots && cls.fixed_slots.length > 0) {
+    cls.fixed_slots.forEach(rule => createFixedSlotRow(rule));
   }
 
   classModal.classList.add('open');
@@ -260,12 +460,37 @@ document.getElementById('saveClass').addEventListener('click', async () => {
     }
   });
 
+  const fixed_slots = [];
+  document.querySelectorAll('.fixed-slot-row').forEach(row => {
+    const subjSel = row.querySelector('.fixed-subject-select');
+    const slotSel = row.querySelector('.fixed-slot-select');
+    const teacherSel = row.querySelector('.fixed-teacher-select');
+    if (subjSel && slotSel) {
+      try {
+        const subjInfo = JSON.parse(subjSel.value);
+        const slotInfo = JSON.parse(slotSel.value);
+        const teacher_id = teacherSel && teacherSel.value ? parseInt(teacherSel.value) : null;
+        if (subjInfo.subject && slotInfo.day && slotInfo.period) {
+          fixed_slots.push({
+            day: slotInfo.day,
+            period: slotInfo.period,
+            subject: subjInfo.subject,
+            teacher_id: teacher_id,
+            is_tp: !!subjInfo.is_tp,
+            tp_subj2: subjInfo.tp_subj2 || null,
+          });
+        }
+      } catch(e){}
+    }
+  });
+
   const payload = {
     original_name: originalNameInput.value || null,
     name,
     required_hours,
     max_teachers,
     tp_pairs,
+    fixed_slots,
   };
 
   const res = await fetch('{{ url_for("save_class") }}', {
@@ -282,3 +507,4 @@ document.getElementById('saveClass').addEventListener('click', async () => {
 });
 </script>
 {% endblock %}
+

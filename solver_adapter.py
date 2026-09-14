@@ -189,7 +189,9 @@ def build_school_class(class_data, teachers_data):
         max_teachers=class_data.get("max_teachers", {}),
         allowed_teachers=allowed_teachers,
         tp_pairs=tp_pairs,
+        fixed_slots=class_data.get("fixed_slots", []),
     )
+
 
 
 SUBJECT_PREF_ALIASES = {

@@ -785,6 +785,54 @@ def validate_strict_subject_preferences(school):
     return _empty_strict_domain_errors(school, domains)
 
 
+def _add_fixed_slot_constraints(model, ctx):
+    """
+    Enforce fixed/forced slot constraints for classes during automated generation.
+    """
+    for school_class in ctx.school.classes:
+        fixed_slots = getattr(school_class, "fixed_slots", []) or []
+        for rule in fixed_slots:
+            day = rule.get("day")
+            period = rule.get("period")
+            subject = rule.get("subject")
+            teacher_id = rule.get("teacher_id")
+            is_tp = rule.get("is_tp", False)
+            tp_subj2 = rule.get("tp_subj2")
+
+            if not day or period is None or not subject:
+                continue
+
+            try:
+                period_int = int(period)
+            except (TypeError, ValueError):
+                continue
+
+            if not is_tp:
+                matching_vars = []
+                for session in ctx.sessions:
+                    if session.school_class == school_class and session.subject == subject and not getattr(session, "is_tp", False):
+                        for teacher, ts, var, _ in ctx.assign[session]:
+                            if ts.day == day and ts.period == period_int:
+                                if teacher_id is None or teacher_id == "" or teacher.id == int(teacher_id):
+                                    matching_vars.append(var)
+                if matching_vars:
+                    model.Add(sum(matching_vars) >= 1)
+            else:
+                tp_head_vars = []
+                for session in ctx.sessions:
+                    if (getattr(session, "is_tp", False) and 
+                        session.school_class == school_class and 
+                        getattr(session, "tp_slot_index", 0) == 0 and 
+                        ((session.subject == subject and (not tp_subj2 or getattr(session, "tp_partner_subject", None) == tp_subj2)) or
+                         (tp_subj2 and session.subject == tp_subj2 and getattr(session, "tp_partner_subject", None) == subject))):
+                        for teacher, ts, var, _ in ctx.assign[session]:
+                            if ts.day == day and ts.period == period_int:
+                                if teacher_id is None or teacher_id == "" or teacher.id == int(teacher_id):
+                                    tp_head_vars.append(var)
+                if tp_head_vars:
+                    model.Add(sum(tp_head_vars) >= 1)
+
+
 def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None, cancel_token=None):
     """
     Find a timetable using CP-SAT.
@@ -833,6 +881,8 @@ def solve_with_cp_sat(school, time_limit_seconds=300, generation_prefs=None, can
     _add_subject_day_cap_constraints(model, school, ctx)
     _add_subject_min_per_day_constraints(model, ctx)
     _add_max_teachers_constraints(model, ctx)
+    _add_fixed_slot_constraints(model, ctx)
+
 
     max_entry = generation_prefs.get("max_entry_period")
     min_exit = generation_prefs.get("min_exit_period")
