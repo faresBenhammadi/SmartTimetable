@@ -304,15 +304,26 @@ def save_teacher():
         or payload.get("max_hours_per_week")
         or 30
     )
+    allowed_classes_by_subject = payload.get("allowed_classes_by_subject", {})
+    allowed_classes = payload.get("allowed_classes", [])
+    if allowed_classes_by_subject and isinstance(allowed_classes_by_subject, dict):
+        union_classes = set()
+        for c_list in allowed_classes_by_subject.values():
+            if isinstance(c_list, list):
+                union_classes.update(c_list)
+        allowed_classes = sorted(list(union_classes))
+
     teacher_data = {
         "id": teacher_id or data_store.next_teacher_id(user_id),
         "name": (payload.get("name") or "").strip(),
         "subjects": payload.get("subjects", []),
-        "allowed_classes": payload.get("allowed_classes", []),
+        "allowed_classes": allowed_classes,
+        "allowed_classes_by_subject": allowed_classes_by_subject,
         "required_hours_per_week": required_hours,
         "required_hours": required_hours,
         "availability": payload.get("availability", {}),
     }
+
 
     if not teacher_data["name"]:
         return jsonify({"ok": False, "error": "Le nom de l'enseignant est requis."}), 400

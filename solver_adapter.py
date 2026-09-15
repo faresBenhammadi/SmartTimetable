@@ -160,12 +160,21 @@ def build_teacher(teacher_data, all_timeslots):
 
 def derive_allowed_teachers(class_name, subject, teachers_data):
     """Build allowed teacher IDs from teachers who teach this subject and class."""
-    return [
-        t["id"]
-        for t in teachers_data
-        if subject in t.get("subjects", [])
-        and class_name in t.get("allowed_classes", [])
-    ]
+    allowed = []
+    for t in teachers_data:
+        if subject not in t.get("subjects", []):
+            continue
+        classes_by_subj = t.get("allowed_classes_by_subject", {})
+        if classes_by_subj and isinstance(classes_by_subj, dict) and subject in classes_by_subj:
+            allowed_classes_for_subj = classes_by_subj[subject]
+            if not allowed_classes_for_subj or class_name in allowed_classes_for_subj:
+                allowed.append(t["id"])
+        else:
+            general_allowed = t.get("allowed_classes", [])
+            if not general_allowed or class_name in general_allowed:
+                allowed.append(t["id"])
+    return allowed
+
 
 
 def build_school_class(class_data, teachers_data):

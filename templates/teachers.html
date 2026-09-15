@@ -22,7 +22,12 @@
       <p>
         {% if teacher.subjects %}
         <span class="tag-list">
-          {% for s in teacher.subjects %}<span class="tag">{{ s }}</span>{% endfor %}
+          {% for s in teacher.subjects %}
+            {% set cls_list = (teacher.allowed_classes_by_subject or {}).get(s) %}
+            <span class="tag">
+              {{ s }}{% if cls_list is not none %}: {{ cls_list | join(', ') if cls_list else 'Aucune classe' }}{% endif %}
+            </span>
+          {% endfor %}
         </span>
         {% else %}
         Aucune matière assignée
@@ -50,7 +55,7 @@
 
 <!-- Teacher Modal -->
 <div class="modal-overlay" id="teacherModal">
-  <div class="modal">
+  <div class="modal" style="max-width: 680px;">
     <div class="modal-header">
       <h3 id="modalTitle">Ajouter un Enseignant</h3>
       <button class="modal-close" id="closeModal">&times;</button>
@@ -77,17 +82,10 @@
       {% endif %}
     </div>
 
-    <div class="form-group">
-      <label class="form-label">Classes que cet enseignant peut enseigner</label>
-      <div class="checkbox-grid" id="classCheckboxes">
-        {% for cls in classes %}
-        <label class="checkbox-item">
-          <input type="checkbox" value="{{ cls }}"> {{ cls }}
-        </label>
-        {% else %}
-        <p class="form-hint">Pas encore de classes. Vous pourrez en ajouter plus tard et modifier cet enseignant.</p>
-        {% endfor %}
-      </div>
+    <div class="form-group" id="classSelectionContainer">
+      <label class="form-label">Classes autorisées par matière</label>
+      <p class="form-hint" style="margin-bottom: 0.5rem;">Sélectionnez les classes que cet enseignant peut enseigner pour chaque matière.</p>
+      <div id="perSubjectClassesList"></div>
     </div>
 
     <div class="form-group">
@@ -120,6 +118,7 @@
 <script>
 const GRID_DAYS = {{ days | tojson }};
 const GRID_PERIODS_BY_DAY = {{ periods_by_day | tojson }};
+const ALL_CLASSES = {{ classes | tojson }};
 const MAX_PERIODS = Math.max(...Object.values(GRID_PERIODS_BY_DAY), 0);
 const AVAILABILITY_CYCLE = ['available', 'preferred', 'unavailable'];
 
@@ -150,6 +149,7 @@ const STATUS_TRANSLATIONS = {
 };
 
 let availability = {};
+let currentTeacher = null;
 
 function buildGrid(containerId, onClick) {
   const table = document.getElementById(containerId);
@@ -203,8 +203,129 @@ function cycleAvailability(key, el) {
 
 const modal = document.getElementById('teacherModal');
 const teacherIdInput = document.getElementById('teacherId');
+const perSubjectClassesList = document.getElementById('perSubjectClassesList');
+
+function renderPerSubjectClasses() {
+  const checkedSubjects = [...document.querySelectorAll('#subjectCheckboxes input:checked')].map(cb => cb.value);
+  
+  // Preserve current UI choices before re-rendering
+  const currentChoices = {};
+  document.querySelectorAll('.subject-class-block').forEach(block => {
+    const s = block.dataset.subject;
+    currentChoices[s] = [...block.querySelectorAll('input[type="checkbox"]:checked')].map(cb => cb.value);
+  });
+
+  perSubjectClassesList.innerHTML = '';
+  if (checkedSubjects.length === 0) {
+    perSubjectClassesList.innerHTML = '<p class="form-hint" style="color: var(--color-warning);">Cochez au moins une matière ci-dessus pour définir les classes autorisées.</p>';
+    return;
+  }
+
+  if (ALL_CLASSES.length === 0) {
+    perSubjectClassesList.innerHTML = '<p class="form-hint">Pas encore de classes enregistrées.</p>';
+    return;
+  }
+
+  checkedSubjects.forEach(subj => {
+    const block = document.createElement('div');
+    block.className = 'subject-class-block';
+    block.dataset.subject = subj;
+    block.style.border = '1px solid var(--color-border)';
+    block.style.borderRadius = 'var(--radius-md)';
+    block.style.padding = '0.75rem';
+    block.style.marginTop = '0.5rem';
+
+    const header = document.createElement('div');
+    header.style.display = 'flex';
+    header.style.justifyContent = 'space-between';
+    header.style.alignItems = 'center';
+    header.style.marginBottom = '0.5rem';
+
+    const title = document.createElement('strong');
+    title.style.fontSize = '0.9rem';
+    title.style.color = 'var(--color-primary)';
+    title.textContent = `Matière : ${subj}`;
+
+    const btnGroup = document.createElement('div');
+    btnGroup.style.display = 'flex';
+    btnGroup.style.gap = '0.25rem';
+
+    const selectAllBtn = document.createElement('button');
+    selectAllBtn.type = 'button';
+    selectAllBtn.className = 'btn btn-secondary btn-sm';
+    selectAllBtn.style.padding = '2px 6px';
+    selectAllBtn.style.fontSize = '0.75rem';
+    selectAllBtn.textContent = 'Tout cocher';
+    selectAllBtn.onclick = (e) => {
+      e.preventDefault();
+      grid.querySelectorAll('input').forEach(cb => {
+        cb.checked = true;
+        cb.closest('.checkbox-item').classList.add('selected');
+      });
+    };
+
+    const deselectAllBtn = document.createElement('button');
+    deselectAllBtn.type = 'button';
+    deselectAllBtn.className = 'btn btn-secondary btn-sm';
+    deselectAllBtn.style.padding = '2px 6px';
+    deselectAllBtn.style.fontSize = '0.75rem';
+    deselectAllBtn.textContent = 'Tout décocher';
+    deselectAllBtn.onclick = (e) => {
+      e.preventDefault();
+      grid.querySelectorAll('input').forEach(cb => {
+        cb.checked = false;
+        cb.closest('.checkbox-item').classList.remove('selected');
+      });
+    };
+
+    btnGroup.appendChild(selectAllBtn);
+    btnGroup.appendChild(deselectAllBtn);
+    header.appendChild(title);
+    header.appendChild(btnGroup);
+    block.appendChild(header);
+
+    const grid = document.createElement('div');
+    grid.className = 'checkbox-grid';
+
+    // Determine initial checked state for subj
+    let initialAllowed = null;
+    if (currentChoices[subj]) {
+      initialAllowed = currentChoices[subj];
+    } else if (currentTeacher) {
+      const bySubj = currentTeacher.allowed_classes_by_subject || {};
+      if (bySubj[subj] !== undefined) {
+        initialAllowed = bySubj[subj];
+      } else if (currentTeacher.allowed_classes) {
+        initialAllowed = currentTeacher.allowed_classes;
+      }
+    }
+
+    ALL_CLASSES.forEach(clsName => {
+      const label = document.createElement('label');
+      label.className = 'checkbox-item';
+      const isChecked = initialAllowed === null ? true : initialAllowed.includes(clsName);
+      if (isChecked) label.classList.add('selected');
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = clsName;
+      cb.checked = isChecked;
+      cb.onchange = () => {
+        label.classList.toggle('selected', cb.checked);
+      };
+
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(` ${clsName}`));
+      grid.appendChild(label);
+    });
+
+    block.appendChild(grid);
+    perSubjectClassesList.appendChild(block);
+  });
+}
 
 function openModal(teacher = null) {
+  currentTeacher = teacher;
   document.getElementById('modalTitle').textContent = teacher ? "Modifier l'Enseignant" : "Ajouter un Enseignant";
   teacherIdInput.value = teacher ? teacher.id : '';
   document.getElementById('teacherName').value = teacher ? teacher.name : '';
@@ -213,13 +334,11 @@ function openModal(teacher = null) {
     : 30;
 
   document.querySelectorAll('#subjectCheckboxes input').forEach(cb => {
-    cb.checked = teacher && teacher.subjects.includes(cb.value);
+    cb.checked = teacher && teacher.subjects && teacher.subjects.includes(cb.value);
     cb.closest('.checkbox-item').classList.toggle('selected', cb.checked);
   });
-  document.querySelectorAll('#classCheckboxes input').forEach(cb => {
-    cb.checked = teacher && teacher.allowed_classes.includes(cb.value);
-    cb.closest('.checkbox-item').classList.toggle('selected', cb.checked);
-  });
+
+  renderPerSubjectClasses();
 
   availability = teacher ? { ...teacher.availability } : {};
   buildGrid('availabilityGrid', cycleAvailability);
@@ -239,9 +358,10 @@ document.querySelectorAll('.edit-teacher-btn').forEach(btn => {
   btn.addEventListener('click', () => openModal(JSON.parse(btn.dataset.teacher)));
 });
 
-document.querySelectorAll('.checkbox-item input').forEach(cb => {
+document.querySelectorAll('#subjectCheckboxes input').forEach(cb => {
   cb.addEventListener('change', () => {
     cb.closest('.checkbox-item').classList.toggle('selected', cb.checked);
+    renderPerSubjectClasses();
   });
 });
 
@@ -249,12 +369,32 @@ document.getElementById('saveTeacher').addEventListener('click', async () => {
   const name = document.getElementById('teacherName').value.trim();
   if (!name) { alert("Veuillez entrer un nom d'enseignant."); return; }
 
+  const subjects = [...document.querySelectorAll('#subjectCheckboxes input:checked')].map(cb => cb.value);
+  if (subjects.length === 0) {
+    alert("Veuillez sélectionner au moins une matière.");
+    return;
+  }
+
+  const allowed_classes_by_subject = {};
+  document.querySelectorAll('.subject-class-block').forEach(block => {
+    const subj = block.dataset.subject;
+    const selectedClasses = [...block.querySelectorAll('input[type="checkbox"]:checked')].map(cb => cb.value);
+    allowed_classes_by_subject[subj] = selectedClasses;
+  });
+
+  // Calculate union flat list
+  const unionClasses = new Set();
+  Object.values(allowed_classes_by_subject).forEach(list => {
+    list.forEach(c => unionClasses.add(c));
+  });
+
   const requiredHours = parseInt(document.getElementById('requiredHours').value) || 30;
   const payload = {
     id: teacherIdInput.value ? parseInt(teacherIdInput.value) : null,
     name,
-    subjects: [...document.querySelectorAll('#subjectCheckboxes input:checked')].map(cb => cb.value),
-    allowed_classes: [...document.querySelectorAll('#classCheckboxes input:checked')].map(cb => cb.value),
+    subjects,
+    allowed_classes: [...unionClasses],
+    allowed_classes_by_subject,
     required_hours_per_week: requiredHours,
     max_hours_per_week: requiredHours,
     availability,
@@ -274,3 +414,4 @@ document.getElementById('saveTeacher').addEventListener('click', async () => {
 });
 </script>
 {% endblock %}
+
