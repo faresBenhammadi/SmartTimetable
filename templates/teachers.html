@@ -205,15 +205,17 @@ const modal = document.getElementById('teacherModal');
 const teacherIdInput = document.getElementById('teacherId');
 const perSubjectClassesList = document.getElementById('perSubjectClassesList');
 
-function renderPerSubjectClasses() {
+function renderPerSubjectClasses(isFreshOpen = false) {
   const checkedSubjects = [...document.querySelectorAll('#subjectCheckboxes input:checked')].map(cb => cb.value);
   
-  // Preserve current UI choices before re-rendering
+  // Preserve current UI choices before re-rendering (only when user toggles subjects while editing)
   const currentChoices = {};
-  document.querySelectorAll('.subject-class-block').forEach(block => {
-    const s = block.dataset.subject;
-    currentChoices[s] = [...block.querySelectorAll('input[type="checkbox"]:checked')].map(cb => cb.value);
-  });
+  if (!isFreshOpen) {
+    document.querySelectorAll('.subject-class-block').forEach(block => {
+      const s = block.dataset.subject;
+      currentChoices[s] = [...block.querySelectorAll('input[type="checkbox"]:checked')].map(cb => cb.value);
+    });
+  }
 
   perSubjectClassesList.innerHTML = '';
   if (checkedSubjects.length === 0) {
@@ -289,7 +291,7 @@ function renderPerSubjectClasses() {
 
     // Determine initial checked state for subj
     let initialAllowed = null;
-    if (currentChoices[subj]) {
+    if (!isFreshOpen && currentChoices[subj]) {
       initialAllowed = currentChoices[subj];
     } else if (currentTeacher) {
       const bySubj = currentTeacher.allowed_classes_by_subject || {};
@@ -338,7 +340,7 @@ function openModal(teacher = null) {
     cb.closest('.checkbox-item').classList.toggle('selected', cb.checked);
   });
 
-  renderPerSubjectClasses();
+  renderPerSubjectClasses(true);
 
   availability = teacher ? { ...teacher.availability } : {};
   buildGrid('availabilityGrid', cycleAvailability);
@@ -361,9 +363,10 @@ document.querySelectorAll('.edit-teacher-btn').forEach(btn => {
 document.querySelectorAll('#subjectCheckboxes input').forEach(cb => {
   cb.addEventListener('change', () => {
     cb.closest('.checkbox-item').classList.toggle('selected', cb.checked);
-    renderPerSubjectClasses();
+    renderPerSubjectClasses(false);
   });
 });
+
 
 document.getElementById('saveTeacher').addEventListener('click', async () => {
   const name = document.getElementById('teacherName').value.trim();
