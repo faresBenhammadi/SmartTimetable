@@ -150,6 +150,18 @@
     <p class="gen-modal-sub">Ces règles seront appliquées comme contraintes strictes lors de la génération.</p>
 
     <div class="pref-row">
+      <label class="pref-label" for="timeLimitSeconds">⏱️ Temps de recherche maximum</label>
+      <p class="pref-desc">Temps maximal accordé au solveur pour trouver et optimiser l'emploi du temps.</p>
+      <select id="timeLimitSeconds">
+        <option value="30">30 secondes (Rapide)</option>
+        <option value="60">1 minute (Express)</option>
+        <option value="120" selected>2 minutes (Recommandé)</option>
+        <option value="300">5 minutes (Recherche approfondie)</option>
+        <option value="600">10 minutes (Maximum)</option>
+      </select>
+    </div>
+
+    <div class="pref-row">
       <label class="pref-label" for="maxEntryPeriod">Période d'entrée maximale</label>
       <p class="pref-desc">Les élèves doivent avoir un cours au plus tard à cette période. "Aucune" = pas de restriction.</p>
       <select id="maxEntryPeriod">
@@ -312,6 +324,7 @@ confirmBtn?.addEventListener('click', async () => {
   generateBtn.disabled = true;
   errorBox.style.display = 'none';
 
+  const timeLimit = parseInt(document.getElementById('timeLimitSeconds').value) || 120;
   const maxEntry = document.getElementById('maxEntryPeriod').value;
   const minExit  = document.getElementById('minExitPeriod').value;
   const allowGaps = document.getElementById('allowGapsToggle').checked;
@@ -325,6 +338,7 @@ confirmBtn?.addEventListener('click', async () => {
   };
 
   const payload = {
+    time_limit_seconds: timeLimit,
     allow_student_gaps: allowGaps,
     weights: weights,
   };

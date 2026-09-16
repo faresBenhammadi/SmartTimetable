@@ -504,6 +504,13 @@ def generate_run():
 
     # Extract generation preferences from the request
     body = request.get_json(silent=True) or {}
+    time_limit_seconds = body.get("time_limit_seconds")
+    try:
+        if time_limit_seconds is not None:
+            time_limit_seconds = int(time_limit_seconds)
+    except (TypeError, ValueError):
+        time_limit_seconds = None
+
     generation_prefs = {
         "max_entry_period": body.get("max_entry_period"),   # int or None
         "min_exit_period":  body.get("min_exit_period"),    # int or None
@@ -513,7 +520,11 @@ def generate_run():
     generation_prefs = {k: v for k, v in generation_prefs.items() if v is not None}
 
     # Start solver in background thread — returns immediately
-    job_id = solver_adapter.start_solver_job(user_id, generation_prefs=generation_prefs)
+    job_id = solver_adapter.start_solver_job(
+        user_id,
+        time_limit_seconds=time_limit_seconds,
+        generation_prefs=generation_prefs
+    )
     return jsonify({"ok": True, "job_id": job_id})
 
 

@@ -22,14 +22,14 @@ _jobs = {}  # job_id -> {status, user_id, cancel_token, schedule_id, errors}
 _jobs_lock = threading.Lock()
 
 
-def _run_solver_in_background(job_id, user_id, generation_prefs=None):
+def _run_solver_in_background(job_id, user_id, time_limit_seconds=None, generation_prefs=None):
     """Worker function that runs the solver in a background thread."""
     with _jobs_lock:
         job = _jobs.get(job_id)
         cancel_token = job.get("cancel_token") if job else None
 
     try:
-        success, result = run_solver(user_id, generation_prefs=generation_prefs, cancel_token=cancel_token)
+        success, result = run_solver(user_id, time_limit_seconds=time_limit_seconds, generation_prefs=generation_prefs, cancel_token=cancel_token)
         with _jobs_lock:
             job = _jobs.get(job_id)
             if job and job["status"] == "canceling":
@@ -58,7 +58,7 @@ def _run_solver_in_background(job_id, user_id, generation_prefs=None):
                 _jobs[job_id] = {"status": "error", "user_id": user_id, "errors": [str(e)]}
 
 
-def start_solver_job(user_id, generation_prefs=None):
+def start_solver_job(user_id, time_limit_seconds=None, generation_prefs=None):
     """Starts a background solver job and returns the job_id immediately."""
     job_id = str(uuid.uuid4())
     with _jobs_lock:
@@ -67,7 +67,7 @@ def start_solver_job(user_id, generation_prefs=None):
             "user_id": user_id,
             "cancel_token": {"event": threading.Event(), "solver": None},
         }
-    t = threading.Thread(target=_run_solver_in_background, args=(job_id, user_id, generation_prefs), daemon=True)
+    t = threading.Thread(target=_run_solver_in_background, args=(job_id, user_id, time_limit_seconds, generation_prefs), daemon=True)
     t.start()
     return job_id
 
