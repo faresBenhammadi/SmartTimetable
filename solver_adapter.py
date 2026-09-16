@@ -167,8 +167,11 @@ def derive_allowed_teachers(class_name, subject, teachers_data):
         classes_by_subj = t.get("allowed_classes_by_subject", {})
         if classes_by_subj and isinstance(classes_by_subj, dict) and subject in classes_by_subj:
             allowed_classes_for_subj = classes_by_subj[subject]
-            if not allowed_classes_for_subj or class_name in allowed_classes_for_subj:
+            if allowed_classes_for_subj is None:
                 allowed.append(t["id"])
+            elif isinstance(allowed_classes_for_subj, list):
+                if class_name in allowed_classes_for_subj:
+                    allowed.append(t["id"])
         else:
             general_allowed = t.get("allowed_classes", [])
             if not general_allowed or class_name in general_allowed:
