@@ -328,12 +328,20 @@ def save_teacher():
     if not teacher_data["name"]:
         return jsonify({"ok": False, "error": "Le nom de l'enseignant est requis."}), 400
 
+    old_name = None
     if teacher_id:
+        existing = next((t for t in teachers_list if t["id"] == teacher_id), None)
+        if existing:
+            old_name = existing.get("name")
         teachers_list = [t if t["id"] != teacher_id else teacher_data for t in teachers_list]
     else:
         teachers_list.append(teacher_data)
 
     data_store.set_teachers(teachers_list, user_id)
+
+    if old_name and teacher_data["name"] and old_name != teacher_data["name"]:
+        data_store.cascade_rename_teacher(user_id, old_name, teacher_data["name"])
+
     return jsonify({"ok": True, "teacher": teacher_data})
 
 
@@ -389,6 +397,10 @@ def save_class():
         classes_list.append(class_data)
 
     data_store.set_classes(classes_list, user_id)
+
+    if original_name and class_data["name"] and original_name != class_data["name"]:
+        data_store.cascade_rename_class(user_id, original_name, class_data["name"])
+
     return jsonify({"ok": True, "class": class_data})
 
 

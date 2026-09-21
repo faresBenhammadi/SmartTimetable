@@ -318,3 +318,153 @@ def delete_schedule(schedule_id, user_id):
             db.commit()
             return True
         return False
+
+
+# ─── Cascading Renames ───────────────────────────────────────────────────────
+
+def _update_schedule_class_name(schedule_data, original_name, new_name):
+    if not schedule_data or not isinstance(schedule_data, dict):
+        return schedule_data
+
+    # 1. Update assignments
+    assignments = schedule_data.get("assignments") or []
+    for assign in assignments:
+        if isinstance(assign, dict):
+            if assign.get("class_name") == original_name:
+                assign["class_name"] = new_name
+            if isinstance(assign.get("school_class"), dict) and assign["school_class"].get("name") == original_name:
+                assign["school_class"]["name"] = new_name
+
+    # 2. Update class_view
+    class_view = schedule_data.get("class_view")
+    if isinstance(class_view, dict) and original_name in class_view:
+        class_view[new_name] = class_view.pop(original_name)
+
+    # 3. Update teacher_view entries
+    teacher_view = schedule_data.get("teacher_view")
+    if isinstance(teacher_view, dict):
+        for t_name, slots in teacher_view.items():
+            if isinstance(slots, dict):
+                for time_key, entry in slots.items():
+                    if isinstance(entry, dict):
+                        if entry.get("class") == original_name:
+                            entry["class"] = new_name
+                        if entry.get("class_name") == original_name:
+                            entry["class_name"] = new_name
+
+    return schedule_data
+
+
+def _update_schedule_teacher_name(schedule_data, old_name, new_name):
+    if not schedule_data or not isinstance(schedule_data, dict):
+        return schedule_data
+
+    # 1. Update assignments
+    assignments = schedule_data.get("assignments") or []
+    for assign in assignments:
+        if isinstance(assign, dict):
+            if assign.get("teacher_name") == old_name:
+                assign["teacher_name"] = new_name
+            if isinstance(assign.get("teacher"), dict) and assign["teacher"].get("name") == old_name:
+                assign["teacher"]["name"] = new_name
+
+    # 2. Update teacher_view keys
+    teacher_view = schedule_data.get("teacher_view")
+    if isinstance(teacher_view, dict) and old_name in teacher_view:
+        teacher_view[new_name] = teacher_view.pop(old_name)
+
+    # 3. Update class_view entries
+    class_view = schedule_data.get("class_view")
+    if isinstance(class_view, dict):
+        for c_name, slots in class_view.items():
+            if isinstance(slots, dict):
+                for time_key, entry in slots.items():
+                    if isinstance(entry, dict):
+                        if entry.get("teacher") == old_name:
+                            entry["teacher"] = new_name
+                        if entry.get("teacher_name") == old_name:
+                            entry["teacher_name"] = new_name
+
+    return schedule_data
+
+
+def cascade_rename_class(user_id, original_name, new_name):
+    if not original_name or not new_name or original_name == new_name:
+        return
+
+    # 1. Update Teachers' allowed_classes & allowed_classes_by_subject
+    teachers = get_teachers(user_id)
+    teachers_modified = False
+    for t in teachers:
+        allowed = t.get("allowed_classes") or []
+        if original_name in allowed:
+            t["allowed_classes"] = [new_name if c == original_name else c for c in allowed]
+            teachers_modified = True
+
+        allowed_by_sub = t.get("allowed_classes_by_subject") or {}
+        if isinstance(allowed_by_sub, dict):
+            for sub, c_list in allowed_by_sub.items():
+                if isinstance(c_list, list) and original_name in c_list:
+                    allowed_by_sub[sub] = [new_name if c == original_name else c for c in c_list]
+                    teachers_modified = True
+
+    if teachers_modified:
+        set_teachers(teachers, user_id)
+
+    # 2. Update last_schedule
+    last_sched = get_last_schedule(user_id)
+    if last_sched:
+        updated_last_sched = _update_schedule_class_name(last_sched, original_name, new_name)
+        set_last_schedule(updated_last_sched, user_id)
+
+    # 3. Update all saved Schedules in DB
+    with get_db() as db:
+        saved_schedules = db.query(Schedule).filter_by(user_id=user_id).all()
+        for s in saved_schedules:
+            if s.schedule_data:
+                s.schedule_data = _update_schedule_class_name(dict(s.schedule_data), original_name, new_name)
+        db.commit()
+    _invalidate_cache(user_id)
+
+
+def cascade_rename_teacher(user_id, old_name, new_name):
+    if not old_name or not new_name or old_name == new_name:
+        return
+
+    # 1. Update Classes' tp_pairs and fixed_slots
+    classes = get_classes(user_id)
+    classes_modified = False
+    for c in classes:
+        tp_pairs = c.get("tp_pairs") or []
+        for tp in tp_pairs:
+            if tp.get("teacher1") == old_name:
+                tp["teacher1"] = new_name
+                classes_modified = True
+            if tp.get("teacher2") == old_name:
+                tp["teacher2"] = new_name
+                classes_modified = True
+
+        fixed_slots = c.get("fixed_slots") or []
+        for fs in fixed_slots:
+            if fs.get("teacher") == old_name:
+                fs["teacher"] = new_name
+                classes_modified = True
+
+    if classes_modified:
+        set_classes(classes, user_id)
+
+    # 2. Update last_schedule
+    last_sched = get_last_schedule(user_id)
+    if last_sched:
+        updated_last_sched = _update_schedule_teacher_name(last_sched, old_name, new_name)
+        set_last_schedule(updated_last_sched, user_id)
+
+    # 3. Update all saved Schedules in DB
+    with get_db() as db:
+        saved_schedules = db.query(Schedule).filter_by(user_id=user_id).all()
+        for s in saved_schedules:
+            if s.schedule_data:
+                s.schedule_data = _update_schedule_teacher_name(dict(s.schedule_data), old_name, new_name)
+        db.commit()
+    _invalidate_cache(user_id)
+
