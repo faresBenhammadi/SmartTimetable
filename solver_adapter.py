@@ -492,10 +492,6 @@ def try_swap_class_cells(user_id, serialized_schedule, class_name, time_a, time_
     if time_a == time_b:
         return False, "Veuillez sélectionner deux créneaux différents pour déplacer ou échanger."
 
-    entries = serialized_schedule.get("entries") or []
-    entry_a = next((e for e in entries if e.get("class") == class_name and e.get("time") == time_a), None)
-    entry_b = next((e for e in entries if e.get("class") == class_name and e.get("time") == time_b), None)
-
     school = build_school_from_store(user_id)
     school.generate_sessions()
     schedule_obj, err = _build_schedule_from_serialized(school, serialized_schedule)
@@ -507,73 +503,71 @@ def try_swap_class_cells(user_id, serialized_schedule, class_name, time_a, time_
     if timeslot_a is None or timeslot_b is None:
         return False, "Les créneaux sélectionnés sont invalides."
 
-    session_a = next(
-        (s for s, a in schedule_obj.assignments.items()
-         if s.school_class.name == class_name and a.timeslot == timeslot_a),
-        None,
-    )
-    session_b = next(
-        (s for s, a in schedule_obj.assignments.items()
-         if s.school_class.name == class_name and a.timeslot == timeslot_b),
-        None,
-    )
+    sessions_a = [
+        s for s, a in schedule_obj.assignments.items()
+        if s.school_class.name == class_name and a.timeslot == timeslot_a
+    ]
+    sessions_b = [
+        s for s, a in schedule_obj.assignments.items()
+        if s.school_class.name == class_name and a.timeslot == timeslot_b
+    ]
 
-    if entry_a is None and entry_b is None:
+    if not sessions_a and not sessions_b:
         return False, "Au moins un créneau sélectionné doit contenir un cours planifié."
 
-    assignment_a = schedule_obj.assignments.get(session_a) if session_a else None
-    assignment_b = schedule_obj.assignments.get(session_b) if session_b else None
-
-    if entry_a is not None and entry_b is not None:
-        if session_a is None or session_b is None:
-            return False, "Impossible d'identifier les séances sélectionnées dans l'emploi du temps."
-        swap_session = session_a
-        swap_session_b = session_b
-    elif entry_a is not None and entry_b is None:
-        if session_a is None:
-            return False, "Impossible d'identifier le cours sélectionné dans l'emploi du temps."
-        swap_session = session_a
-        target_timeslot = timeslot_b
-    else:
-        if session_b is None:
-            return False, "Impossible d'identifier le cours sélectionné dans l'emploi du temps."
-        swap_session = session_b
-        target_timeslot = timeslot_a
-
     new_schedule = Schedule()
+    moved_sessions = set()
+
     for session, assignment in schedule_obj.assignments.items():
-        if entry_a is not None and entry_b is not None:
-            if session == swap_session:
-                new_schedule.assign(session, Assignment(assignment.teacher, assignment_b.timeslot))
-            elif session == swap_session_b:
-                new_schedule.assign(session, Assignment(assignment.teacher, assignment_a.timeslot))
-            else:
-                new_schedule.assign(session, assignment)
-        elif entry_a is not None and entry_b is None:
-            if session == swap_session:
-                new_schedule.assign(session, Assignment(assignment.teacher, target_timeslot))
-            else:
-                new_schedule.assign(session, assignment)
-        elif entry_a is None and entry_b is not None:
-            if session == swap_session:
-                new_schedule.assign(session, Assignment(assignment.teacher, target_timeslot))
-            else:
-                new_schedule.assign(session, assignment)
+        if session in sessions_a:
+            new_schedule.assign(session, Assignment(assignment.teacher, timeslot_b))
+            moved_sessions.add(session)
+        elif session in sessions_b:
+            new_schedule.assign(session, Assignment(assignment.teacher, timeslot_a))
+            moved_sessions.add(session)
+        else:
+            new_schedule.assign(session, assignment)
 
+    # 1. Check teacher double-booking & unavailability & class collision
     for session, assignment in new_schedule.assignments.items():
-        reason = school.get_inconsistency_reason(
-            session,
-            assignment.teacher,
-            assignment.timeslot,
-            new_schedule,
-            ignore_subject_slot_allowed=True,
-        )
-        if reason:
-            return False, reason
+        teacher = assignment.teacher
+        ts = assignment.timeslot
+        cls = session.school_class
 
-    min_violations = school.validate_min_per_day_schedule(new_schedule)
-    if min_violations:
-        return False, f"Contrainte de volume quotidien non respectée : {min_violations[0]}"
+        for other_session, other_assignment in new_schedule.assignments.items():
+            if other_session == session:
+                continue
+            if other_assignment.teacher == teacher and other_assignment.timeslot == ts:
+                return False, f"L'enseignant {teacher.name} a déjà un cours sur ce créneau ({ts.day} P{ts.period}) avec la classe {other_session.school_class.name}."
+            if other_session.school_class == cls and other_assignment.timeslot == ts:
+                if getattr(session, "is_tp", False) and getattr(other_session, "is_tp", False) and session.subject != other_session.subject:
+                    continue
+                return False, f"La classe {cls.name} a déjà un cours de {other_session.subject} sur le créneau {ts.day} P{ts.period} avec l'enseignant {other_assignment.teacher.name}."
+
+        if ts in teacher.unavailable_slots:
+            return False, f"L'enseignant {teacher.name} est indiqué comme indisponible le {ts.day} P{ts.period}."
+
+    # 2. Check max per day for subjects in moved sessions
+    checked = set()
+    for session in moved_sessions:
+        assignment = new_schedule.assignments.get(session)
+        if not assignment:
+            continue
+        cls = session.school_class
+        subj = session.subject
+        day = assignment.timeslot.day
+        key = (cls.name, subj, day)
+        if key in checked:
+            continue
+        checked.add(key)
+
+        max_per_day = school.get_subject_max_per_day(subj)
+        subject_count = sum(
+            1 for s, a in new_schedule.assignments.items()
+            if s.school_class == cls and s.subject == subj and a.timeslot.day == day
+        )
+        if subject_count > max_per_day:
+            return False, f"La matière '{subj}' dépasserait son quota maximal de {max_per_day} cours/jour le {day} pour la classe {cls.name}."
 
     school.schedule = new_schedule
     return True, serialize_schedule(school, user_id)
@@ -583,13 +577,6 @@ def try_swap_teacher_cells(user_id, serialized_schedule, teacher_name, time_a, t
     if time_a == time_b:
         return False, "Veuillez sélectionner deux créneaux différents pour échanger."
 
-    entries = serialized_schedule.get("entries") or []
-    entry_a = next((e for e in entries if e.get("teacher") == teacher_name and e.get("time") == time_a), None)
-    entry_b = next((e for e in entries if e.get("teacher") == teacher_name and e.get("time") == time_b), None)
-
-    if entry_a is None or entry_b is None:
-        return False, "Les deux créneaux sélectionnés doivent contenir des cours de l'enseignant."
-
     school = build_school_from_store(user_id)
     school.generate_sessions()
     schedule_obj, err = _build_schedule_from_serialized(school, serialized_schedule)
@@ -601,43 +588,86 @@ def try_swap_teacher_cells(user_id, serialized_schedule, teacher_name, time_a, t
     if timeslot_a is None or timeslot_b is None:
         return False, "Les créneaux sélectionnés sont invalides."
 
-    session_a = next(
-        (s for s, a in schedule_obj.assignments.items()
-         if a.teacher.name == teacher_name and a.timeslot == timeslot_a),
-        None,
-    )
-    session_b = next(
-        (s for s, a in schedule_obj.assignments.items()
-         if a.teacher.name == teacher_name and a.timeslot == timeslot_b),
-        None,
-    )
+    sessions_a = [
+        s for s, a in schedule_obj.assignments.items()
+        if a.teacher.name == teacher_name and a.timeslot == timeslot_a
+    ]
+    sessions_b = [
+        s for s, a in schedule_obj.assignments.items()
+        if a.teacher.name == teacher_name and a.timeslot == timeslot_b
+    ]
 
-    if session_a is None or session_b is None:
-        return False, "Impossible d'identifier les séances de l'enseignant sélectionné."
+    if not sessions_a and not sessions_b:
+        return False, "Au moins un créneau sélectionné doit contenir un cours de l'enseignant."
+
+    expanded_a = set(sessions_a)
+    expanded_b = set(sessions_b)
+
+    for s in list(expanded_a):
+        if getattr(s, "is_tp", False):
+            for other_s, a in schedule_obj.assignments.items():
+                if getattr(other_s, "is_tp", False) and other_s.school_class == s.school_class and a.timeslot == timeslot_a:
+                    expanded_a.add(other_s)
+
+    for s in list(expanded_b):
+        if getattr(s, "is_tp", False):
+            for other_s, a in schedule_obj.assignments.items():
+                if getattr(other_s, "is_tp", False) and other_s.school_class == s.school_class and a.timeslot == timeslot_b:
+                    expanded_b.add(other_s)
 
     new_schedule = Schedule()
+    moved_sessions = set()
+
     for session, assignment in schedule_obj.assignments.items():
-        if session == session_a:
+        if session in expanded_a:
             new_schedule.assign(session, Assignment(assignment.teacher, timeslot_b))
-        elif session == session_b:
+            moved_sessions.add(session)
+        elif session in expanded_b:
             new_schedule.assign(session, Assignment(assignment.teacher, timeslot_a))
+            moved_sessions.add(session)
         else:
             new_schedule.assign(session, assignment)
 
+    # 1. Check teacher double-booking & unavailability & class collision
     for session, assignment in new_schedule.assignments.items():
-        reason = school.get_inconsistency_reason(
-            session,
-            assignment.teacher,
-            assignment.timeslot,
-            new_schedule,
-            ignore_subject_slot_allowed=True,
-        )
-        if reason:
-            return False, reason
+        teacher = assignment.teacher
+        ts = assignment.timeslot
+        cls = session.school_class
 
-    min_violations = school.validate_min_per_day_schedule(new_schedule)
-    if min_violations:
-        return False, f"Contrainte de volume quotidien non respectée : {min_violations[0]}"
+        for other_session, other_assignment in new_schedule.assignments.items():
+            if other_session == session:
+                continue
+            if other_assignment.teacher == teacher and other_assignment.timeslot == ts:
+                return False, f"L'enseignant {teacher.name} a déjà un cours sur ce créneau ({ts.day} P{ts.period}) avec la classe {other_session.school_class.name}."
+            if other_session.school_class == cls and other_assignment.timeslot == ts:
+                if getattr(session, "is_tp", False) and getattr(other_session, "is_tp", False) and session.subject != other_session.subject:
+                    continue
+                return False, f"La classe {cls.name} a déjà un cours de {other_session.subject} sur le créneau {ts.day} P{ts.period} avec l'enseignant {other_assignment.teacher.name}."
+
+        if ts in teacher.unavailable_slots:
+            return False, f"L'enseignant {teacher.name} est indiqué comme indisponible le {ts.day} P{ts.period}."
+
+    # 2. Check max per day for subjects in moved sessions
+    checked = set()
+    for session in moved_sessions:
+        assignment = new_schedule.assignments.get(session)
+        if not assignment:
+            continue
+        cls = session.school_class
+        subj = session.subject
+        day = assignment.timeslot.day
+        key = (cls.name, subj, day)
+        if key in checked:
+            continue
+        checked.add(key)
+
+        max_per_day = school.get_subject_max_per_day(subj)
+        subject_count = sum(
+            1 for s, a in new_schedule.assignments.items()
+            if s.school_class == cls and s.subject == subj and a.timeslot.day == day
+        )
+        if subject_count > max_per_day:
+            return False, f"La matière '{subj}' dépasserait son quota maximal de {max_per_day} cours/jour le {day} pour la classe {cls.name}."
 
     school.schedule = new_schedule
     return True, serialize_schedule(school, user_id)
